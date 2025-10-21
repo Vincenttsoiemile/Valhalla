@@ -1,0 +1,492 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Valhalla 訂單路徑規劃系統</title>
+    
+    <!-- Leaflet CSS -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    
+    <!-- Custom CSS -->
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <!-- 全屏 Loading 覆蓋層 -->
+    <div id="fullScreenLoading" class="fullscreen-loading" style="display: none;">
+        <div class="loading-content">
+            <div class="spinner-large"></div>
+            <p class="loading-text">計算中...</p>
+        </div>
+    </div>
+    
+    <!-- 完成提示（覆蓋全螢幕） -->
+    <div id="successAlert" class="success-alert" style="display: none;">
+        <div class="success-content">
+            <span class="success-icon">✓</span>
+            <span class="success-text">計算完成！</span>
+        </div>
+    </div>
+    
+    <!-- 路線預加載進度視窗 -->
+    <div id="routeLoadingModal" class="loading-modal" style="display: none;">
+        <div class="loading-modal-content">
+            <div class="loading-modal-header">
+                <span class="loading-icon">🗺️</span>
+                <span class="loading-title">預加載路線中...</span>
+            </div>
+            <div class="loading-progress-info">
+                <span id="loadingProgressText">準備中...</span>
+            </div>
+            <div class="loading-progress-bar-container">
+                <div id="loadingProgressBar" class="loading-progress-bar" style="width: 0%"></div>
+            </div>
+            <div class="loading-stats">
+                <div class="stat-item">
+                    <span class="stat-label">實際路線：</span>
+                    <span id="actualRoutes" class="stat-value">0</span>
+                </div>
+                <div class="stat-item">
+                    <span class="stat-label">直線距離：</span>
+                    <span id="straightRoutes" class="stat-value">0</span>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div class="container">
+        <!-- 側邊欄 -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>🗺️ 路徑規劃</h1>
+                <div class="settings-buttons">
+                    <span class="help-icon settings-help">?</span>
+                    <button id="copySettingsBtn" class="text-btn">EXPORT</button>
+                    <button id="importSettingsBtn" class="text-btn">IMPORT</button>
+                    <p class="explanation settings-explanation">
+                        <strong>EXPORT</strong>：複製所有當前設定到剪貼板（JSON 格式），可透過聊天應用分享給團隊成員。<br>
+                        <strong>IMPORT</strong>：從剪貼板讀取並自動應用設定，快速同步配置。
+                    </p>
+                </div>
+            </div>
+            
+            <!-- 起點設置 -->
+            <div class="form-group">
+                <label>起點 <span class="hint">(點擊地圖或輸入座標)</span></label>
+                <div class="coord-input">
+                    <input type="number" id="startLat" placeholder="緯度" step="0.000001">
+                    <input type="number" id="startLon" placeholder="經度" step="0.000001">
+                </div>
+                <button id="clearStartBtn" class="btn btn-secondary btn-small">清除起點</button>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- 終點設置 -->
+            <div class="form-group">
+                <label>終點設置
+                    <span class="help-icon">?</span>
+                    <p class="explanation">
+                        <strong>使用最後訂單</strong>：路徑結束於優化後的最後一個訂單（預設）。<br>
+                        <strong>手動設置終點</strong>：所有訂單完成後前往指定終點（如倉庫、下一區域）。<br>
+                        <strong>使用最遠訂單</strong>：確保最遠的訂單排在最後，避免繞回。
+                    </p>
+                </label>
+                <div class="verification-options">
+                    <label class="radio-label">
+                        <input type="radio" name="endPointMode" value="last_order" checked>
+                        <span>使用最後訂單</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="endPointMode" value="manual">
+                        <span>手動設置終點</span>
+                    </label>
+                    <label class="radio-label">
+                        <input type="radio" name="endPointMode" value="farthest">
+                        <span>使用最遠訂單</span>
+                    </label>
+                </div>
+                
+                <!-- 手動終點輸入（僅在手動模式顯示）-->
+                <div id="manualEndPointSection" style="display: none; margin-top: 5px;">
+                    <div style="display: flex; gap: 4px; align-items: center;">
+                        <input type="number" id="endLat" placeholder="緯度" step="0.000001" style="flex: 1; margin-bottom: 0;">
+                        <input type="number" id="endLon" placeholder="經度" step="0.000001" style="flex: 1; margin-bottom: 0;">
+                        <button id="setEndPointBtn" class="btn btn-secondary btn-small" style="margin: 0;">📍</button>
+                        <button id="clearEndBtn" class="btn btn-secondary btn-small" style="margin: 0;">✕</button>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- Order Group 輸入 -->
+            <div class="form-group">
+                <label>Order Group</label>
+                <input type="text" id="orderGroupInput" placeholder="輸入 order_group">
+                <button id="analyzeBtn" class="btn btn-info" style="margin-top: 10px;">🧠 智能分析訂單分佈</button>
+            </div>
+            
+            <!-- 智能建議面板 -->
+            <div id="suggestionPanel" class="suggestion-panel" style="display: none;">
+                <div class="suggestion-header">
+                    <span class="suggestion-icon">💡</span>
+                    <span class="suggestion-title">智能建議</span>
+                </div>
+                
+                <div class="suggestion-stats">
+                    <div class="stat-row">
+                        <span class="stat-label">訂單數量：</span>
+                        <span id="statTotalOrders" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">長寬比：</span>
+                        <span id="statAspectRatio" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">密度：</span>
+                        <span id="statDensity" class="stat-value">-</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="stat-label">方向：</span>
+                        <span id="statOrientation" class="stat-value">-</span>
+                    </div>
+                </div>
+                
+                <div class="suggestion-reasoning">
+                    <strong>分析結果：</strong>
+                    <p id="reasoningText">-</p>
+                </div>
+                
+                <div class="suggestion-options">
+                    <label class="suggestion-checkbox">
+                        <input type="checkbox" id="suggestGroupMethod" checked>
+                        <span class="checkbox-label">群組排序方法：<span id="suggestGroupMethodValue" class="suggest-value">-</span></span>
+                    </label>
+                    
+                    <label class="suggestion-checkbox">
+                        <input type="checkbox" id="suggestMaxGroupSize" checked>
+                        <span class="checkbox-label">每組最多訂單數：<span id="suggestMaxGroupSizeValue" class="suggest-value">-</span></span>
+                    </label>
+                    
+                    <label class="suggestion-checkbox">
+                        <input type="checkbox" id="suggestClusterRadius" checked>
+                        <span class="checkbox-label">鄰域半徑：<span id="suggestClusterRadiusValue" class="suggest-value">-</span> km</span>
+                    </label>
+                    
+                    <label class="suggestion-checkbox">
+                        <input type="checkbox" id="suggestMinSamples" checked>
+                        <span class="checkbox-label">最小樣本數：<span id="suggestMinSamplesValue" class="suggest-value">-</span></span>
+                    </label>
+                    
+                    <label class="suggestion-checkbox">
+                        <input type="checkbox" id="suggestVerification" checked>
+                        <span class="checkbox-label">障礙檢測：<span id="suggestVerificationValue" class="suggest-value">-</span></span>
+                    </label>
+                    
+                    <div id="penaltySuggestions" style="display: none; margin-left: 20px;">
+                        <label class="suggestion-checkbox">
+                            <input type="checkbox" id="suggestGroupPenalty" checked>
+                            <span class="checkbox-label">群組間懲罰：<span id="suggestGroupPenaltyValue" class="suggest-value">-</span>x</span>
+                        </label>
+                        
+                        <label class="suggestion-checkbox">
+                            <input type="checkbox" id="suggestInnerPenalty" checked>
+                            <span class="checkbox-label">組內懲罰：<span id="suggestInnerPenaltyValue" class="suggest-value">-</span>x</span>
+                        </label>
+                        
+                        <label class="suggestion-checkbox">
+                            <input type="checkbox" id="suggestCheckHighways" checked>
+                            <span class="checkbox-label">檢測高速公路：<span id="suggestCheckHighwaysValue" class="suggest-value">-</span></span>
+                        </label>
+                    </div>
+                </div>
+                
+                <button id="applySuggestionsBtn" class="btn btn-primary" style="width: 100%; margin-top: 15px;">✓ 應用選中的建議</button>
+                
+                <button id="closeSuggestionBtn" class="btn btn-secondary" style="width: 100%; margin-top: 10px;">✕ 關閉</button>
+            </div>
+            
+            <!-- 序號顯示模式 -->
+            <div class="form-group">
+                <label>序號顯示模式 <span class="hint">(Display)</span>
+                    <span class="help-icon">?</span>
+                    <p class="explanation">
+                        <strong>不連號</strong>：按群組分別編號 A-01, A-02, B-01, B-02...<br>
+                        <strong>連號</strong>：所有訂單統一編號 1, 2, 3, 4...
+                    </p>
+                </label>
+                <select id="sequenceMode" class="form-select">
+                    <option value="grouped">不連號 (A-01, B-01...)</option>
+                    <option value="continuous">連號 (1, 2, 3...)</option>
+                </select>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- 優化模式選擇 -->
+            <div class="form-group">
+                <label>路線優化模式
+                    <span class="help-icon">?</span>
+                    <p class="explanation">
+                        <strong>分組模式</strong>：適合大量訂單，先聚類分組再優化。<br>
+                        <strong>全局優化</strong>：適合少量訂單（<100），直接計算全局最短路徑。
+                    </p>
+                </label>
+                <select id="optimizationMode" class="form-select">
+                    <option value="clustering">📦 分組模式 - 智能分組配送</option>
+                    <option value="global">🌐 全局優化 - TSP 最短路徑</option>
+                </select>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- 全局優化方法（僅在全局模式顯示）-->
+            <div id="globalMethodSection" class="form-group" style="display: none;">
+                <label>全局優化方法 <span class="hint">(Global)</span>
+                    <span class="help-icon">?</span>
+                    <p class="explanation">
+                        <strong>Valhalla</strong>：使用 Valhalla API 的啟發式算法，速度快。<br>
+                        <strong>OR-Tools</strong>：Google 優化工具，接近最優解。<br>
+                        <strong>LKH</strong>：Lin-Kernighan-Helsgaun，大規模最優算法。
+                    </p>
+                </label>
+                <select id="globalMethod" class="form-select">
+                    <option value="valhalla">Valhalla Optimized - 快速 (<50點)</option>
+                    <option value="ortools">OR-Tools TSP - 精確 (<100點)</option>
+                    <option value="lkh">LKH - 超大規模 (100+點)</option>
+                </select>
+            </div>
+            
+            <!-- 分組參數（僅在分組模式顯示）-->
+            <div id="clusteringSection">
+                <div class="form-group">
+                    <label>每組最多訂單數 <span class="hint">(Group)</span></label>
+                    <input type="number" id="maxGroupSize" value="30" min="10" max="100" step="5">
+                </div>
+                
+                <div class="form-group">
+                    <label>鄰域半徑 (km) <span class="hint">(Group)</span></label>
+                    <input type="number" id="clusterRadius" value="1.0" min="0.3" max="3.0" step="0.1">
+                </div>
+                
+                <div class="form-group">
+                    <label>最小樣本數 <span class="hint">(Group, 2-10)</span>
+                        <span class="help-icon">?</span>
+                        <p class="explanation">至少多少個訂單才能形成一個群組。數值越小越容易形成小群組；數值越大群組更密集但孤立點會更多。</p>
+                    </label>
+                    <input type="number" id="minSamples" value="3" min="2" max="10" step="1">
+                </div>
+                
+                <div class="form-group">
+                    <label>距離計算方式 <span class="hint">(Group)</span>
+                        <span class="help-icon">?</span>
+                        <p class="explanation">Euclidean 速度快、誤差小；Haversine 考慮地球曲率、最精確但稍慢；Manhattan 適合網格狀道路。一般建議使用 Euclidean。</p>
+                    </label>
+                    <select id="metric" class="form-select">
+                        <option value="euclidean">Euclidean（歐幾里得）- 快速簡單</option>
+                        <option value="haversine">Haversine（球面距離）- 更精確</option>
+                        <option value="manhattan">Manhattan（曼哈頓）- 網格距離</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>群組排序方法 <span class="hint">(Group)</span>
+                        <span class="help-icon">?</span>
+                        <p class="explanation">
+                            <strong>Greedy</strong>：每次選最近的群組，速度快但可能繞回起點。<br>
+                            <strong>Sweep</strong>：按極角順時針掃描，路線順暢不會繞回。<br>
+                            <strong>2-opt</strong>：先貪心再優化反轉區間，路線最優但計算較慢。
+                        </p>
+                    </label>
+                    <select id="groupOrderMethod" class="form-select">
+                        <option value="greedy">Greedy（貪心最近鄰）- 快速</option>
+                        <option value="sweep">Sweep（極角排序）- 避免繞回</option>
+                        <option value="2opt">2-opt 優化 - 最優但較慢</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>組內排序方法 <span class="hint">(Seq)</span>
+                        <span class="help-icon">?</span>
+                        <p class="explanation">
+                            <strong>Nearest Neighbor</strong>：簡單快速，每次選最近的訂單。<br>
+                            <strong>OR-Tools</strong>：計算組內最優順序，稍慢但更優。<br>
+                            <strong>2-opt</strong>：基於貪心再局部優化，平衡速度與品質。
+                        </p>
+                    </label>
+                    <select id="innerOrderMethod" class="form-select">
+                        <option value="nearest">Nearest Neighbor - 快速貪心</option>
+                        <option value="ortools">OR-Tools TSP - 最優解</option>
+                        <option value="2opt-inner">2-opt - 局部優化</option>
+                    </select>
+                </div>
+                
+                <div class="form-group">
+                    <label>Random State <span class="hint">(Group, 0-999)</span>
+                        <span class="help-icon">?</span>
+                        <p class="explanation">控制大群組細分時的初始質心位置。設定固定值（如 42）可確保每次分組結果相同，方便測試與比較；留空則每次結果可能不同。</p>
+                    </label>
+                    <input type="number" id="randomState" value="42" min="0" max="999" step="1">
+                </div>
+                
+                <div class="form-group">
+                    <label>N Init <span class="hint">(Group, 1-100)</span>
+                        <span class="help-icon">?</span>
+                        <p class="explanation">K-means 演算法的重試次數。數值越大，分組品質越好但計算越慢。預設 10 已足夠，若分組結果不理想可提高到 20-50。</p>
+                    </label>
+                    <input type="number" id="nInit" value="10" min="1" max="100" step="1">
+                </div>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- 障礙檢測方式 -->
+            <div class="form-group">
+                <label>障礙檢測方式 <span class="hint">(Group + Seq)</span>
+                    <p class="explanation">
+                        <strong>不檢測</strong>：最快，不考慮障礙。<br>
+                        <strong>幾何數據</strong>：<span style="color: #28a745;">⭐ 推薦</span> 優化路徑以減少穿越次數，速度快。<br>
+                        <strong>實際路線</strong>：混合模式（群組用 API，組內用幾何），最準確但慢。
+                    </p>
+                </label>
+                <select id="verification" class="form-select">
+                    <option value="none">🚫 不檢測 - 快速</option>
+                    <option value="geometry">📐 幾何數據 - 中等 ⭐推薦</option>
+                    <option value="api">🛣️ 實際路線 - 精確但慢</option>
+                </select>
+
+                <!-- 高速公路檢測選項 -->
+                <div id="highwayOption" class="checkbox-option" style="display: none; margin-top: 6px;">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="checkHighways" checked>
+                        <span>🛣️ 同時檢測高速公路</span>
+                    </label>
+                </div>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- 預加載路線選項 -->
+            <div class="form-group">
+                <label>路線預加載 <span class="hint">(Display)</span>
+                    <span class="help-icon">?</span>
+                    <p class="explanation">
+                        勾選後會預先加載所有訂單間的實際路線，可懸停查看和導航。<br>
+                        ⚠️ <strong>載入時間較長：每 50 訂單約需 3 分鐘，請耐心等待。</strong><br>
+                        不勾選則快速完成計算（<3秒），但無法查看路線細節。
+                    </p>
+                </label>
+                <div class="checkbox-option">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="preloadRoutes">
+                        <span>🗺️ 預加載所有路線到地圖</span>
+                    </label>
+                </div>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- 跨河懲罰係數 -->
+            <div id="penaltySettings" class="form-group" style="display: none;">
+                <label>跨河懲罰係數 <span class="hint">(數值越大越避免跨河)</span>
+                    <span class="help-icon">?</span>
+                    <p class="explanation">
+                        <strong>群組間懲罰</strong>：影響群組訪問順序（預設 2.0）。<br>
+                        <strong>組內懲罰</strong>：影響組內訂單順序（預設 1.5）。<br>
+                        建議：市區多橋樑 1.3-1.5，郊區少橋樑 2.0-3.0，鄉村僅一橋 3.0-5.0。
+                    </p>
+                </label>
+
+                <div class="penalty-control">
+                    <label class="penalty-label">群組間懲罰 <span class="hint">(Group)</span></label>
+                    <input type="number" id="groupPenalty" value="2.0" min="1.0" max="5.0" step="0.1">
+                    <span class="penalty-value">2.0x</span>
+                </div>
+
+                <div class="penalty-control">
+                    <label class="penalty-label">組內懲罰 <span class="hint">(Seq)</span></label>
+                    <input type="number" id="innerPenalty" value="1.5" min="1.0" max="5.0" step="0.1">
+                    <span class="penalty-value">1.5x</span>
+                </div>
+            </div>
+            
+            <div class="divider"></div>
+            
+            <!-- 計算按鈕 -->
+            <button id="calculateBtn" class="btn btn-success" disabled>計算路徑</button>
+
+            <div class="divider"></div>
+            
+            <!-- 結果顯示 -->
+            <div id="resultsPanel" class="results-panel" style="display: none;">
+                <div class="results-header">
+                    <h3>📊 訂單順序</h3>
+                </div>
+                <div id="ordersList" class="orders-list"></div>
+            </div>
+            
+            <!-- 載入中提示（側邊欄） - 已移除，改用全屏 -->
+            <!-- <div id="loadingPanel" class="loading-panel" style="display: none;">
+                <div class="spinner"></div>
+                <p>計算中...</p>
+            </div> -->
+            
+        </div>
+        
+        <!-- 地圖區域 -->
+        <div class="maps-container">
+            <!-- 地圖 1: Valhalla 優化路徑 -->
+            <div class="map-wrapper">
+                <div class="map-header">地圖 1: Valhalla 優化路徑</div>
+                <div class="map-container">
+                    <div id="map"></div>
+                    <div class="map-instruction">
+                        點擊地圖設置起點
+                    </div>
+                    
+                    <!-- 路線導航控制器 -->
+                    <div id="routeNavigator" class="route-navigator">
+                        <div class="nav-progress">
+                            <span id="navProgressText">起點 → 訂單 1</span>
+                        </div>
+                        <div class="nav-progress-bar">
+                            <div id="navProgressFill" class="nav-progress-fill" style="width: 0%"></div>
+                        </div>
+                        <div class="nav-buttons">
+                            <button id="navPrevBtn" class="nav-btn nav-btn-prev" disabled>
+                                ◀ Previous
+                            </button>
+                            <button id="navNextBtn" class="nav-btn nav-btn-next">
+                                Next ▶
+                            </button>
+                            <button id="navResetBtn" class="nav-btn nav-btn-reset">
+                                ✕
+                            </button>
+                        </div>
+                        <div class="nav-info">點擊 Next 查看逐段路線</div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- 地圖 2: Delivery Sequence 順序 -->
+            <div class="map-wrapper">
+                <div class="map-header">地圖 2: Delivery Sequence 順序</div>
+                <div class="map-container">
+                    <div id="map2"></div>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <!-- Leaflet JS -->
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    
+    <!-- Polyline Decoder -->
+    <script src="https://unpkg.com/@mapbox/polyline@1.1.1/src/polyline.js"></script>
+
+    <!-- Custom JS -->
+    <script src="/static/app.js?v=20251003164500"></script>
+</body>
+</html>
+

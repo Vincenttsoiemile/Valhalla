@@ -1,0 +1,12 @@
+requests
+flask
+flask-cors
+pymysql
+scikit-learn
+numpy
+shapely
+scipy
+joblib
+ortools
+python-tsp
+

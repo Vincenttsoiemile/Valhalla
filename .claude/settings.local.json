@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Read(//Users/vincent/Desktop/MyDev/**)",
+      "Bash(/opt/homebrew/bin/python3:*)",
+      "Bash(kill:*)",
+      "Read(//opt/homebrew/Cellar/python@3.13/3.13.7/Frameworks/Python.framework/Versions/3.13/bin/**)",
+      "Bash(curl:*)",
+      "Bash(pkill:*)",
+      "Bash(lsof:*)",
+      "Bash(python3:*)",
+      "Bash(source venv/bin/activate:*)",
+      "Bash(python:*)",
+      "Bash(git init:*)",
+      "Bash(git branch:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
