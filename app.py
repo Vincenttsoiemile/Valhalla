@@ -14,10 +14,10 @@ CORS(app)
 
 # MySQL 配置
 DB_CONFIG = {
-    'host': '38.14.208.188',
-    'port': 3306,
-    'user': 'reader',
-    'password': 'Emile#5092r',
+    'host': '15.156.112.57',
+    'port': 33306,
+    'user': 'select-user',
+    'password': 'emile2024',
     'database': 'bonddb',
     'charset': 'utf8mb4'
 }
@@ -204,6 +204,11 @@ def calculate_route():
         from sklearn.cluster import DBSCAN, KMeans
         import numpy as np
         import math
+        import time
+        
+        # 初始化演算法步驟記錄
+        algorithm_steps = []
+        step_counter = 0
         
         def calculate_distance(lat1, lon1, lat2, lon2):
             """計算兩點之間的歐幾里得距離"""
@@ -217,7 +222,22 @@ def calculate_route():
         # 準備數據
         coords = np.array([[o['lat'], o['lon']] for o in valid_orders])
         
+        # 記錄步驟 0：初始狀態
+        step_counter += 1
+        algorithm_steps.append({
+            'step': step_counter,
+            'name': '初始化',
+            'description': f'載入 {n_orders} 個訂單座標',
+            'timestamp': float(time.time()),
+            'affected_by': ['order_group'],
+            'data': {
+                'orders': [{'lat': float(o['lat']), 'lon': float(o['lon']), 'tracking_number': o['tracking_number']} for o in valid_orders],
+                'total_orders': int(n_orders)
+            }
+        })
+        
         # DBSCAN 參數（根據 metric 選擇不同的處理方式）
+        step_counter += 1
         if metric == 'haversine':
             # Haversine 需要弧度並使用地球半徑
             coords_rad = np.radians(coords)
@@ -232,10 +252,81 @@ def calculate_route():
             cluster_labels = dbscan.fit_predict(coords)
             print(f"[INFO] 使用 {metric} 距離，eps={eps_distance:.6f} 度")
         
+        # 記錄步驟 1：DBSCAN 聚類完成
+        unique_labels = set(cluster_labels)
+        n_clusters = len(unique_labels) - (1 if -1 in unique_labels else 0)
+        n_noise = list(cluster_labels).count(-1)
+        
+        # 建立初步群組資料並計算中心點
+        dbscan_clusters = {}
+        dbscan_centers = {}
+        for idx, label in enumerate(cluster_labels):
+            label_key = str(int(label))  # 轉換為字符串
+            if label_key not in dbscan_clusters:
+                dbscan_clusters[label_key] = []
+            dbscan_clusters[label_key].append({
+                'index': int(idx),
+                'lat': float(valid_orders[idx]['lat']),
+                'lon': float(valid_orders[idx]['lon']),
+                'tracking_number': valid_orders[idx]['tracking_number']
+            })
+        
+        # 計算每個 DBSCAN 群組的中心點
+        for label_key, orders in dbscan_clusters.items():
+            center_lat = sum(o['lat'] for o in orders) / len(orders)
+            center_lon = sum(o['lon'] for o in orders) / len(orders)
+            dbscan_centers[label_key] = {
+                'lat': float(center_lat),
+                'lon': float(center_lon),
+                'count': len(orders)
+            }
+        
+        # 生成包含中心點的描述
+        cluster_centers_desc = []
+        for label_key, center in sorted(dbscan_centers.items(), key=lambda x: int(x[0]) if x[0] != '-1' else -999):
+            if label_key != '-1':  # 排除噪聲點
+                cluster_centers_desc.append(f"群組{label_key}: ({center['lat']:.5f}, {center['lon']:.5f}), {center['count']}點")
+        
+        centers_text = " | ".join(cluster_centers_desc[:3])  # 只顯示前3個群組避免太長
+        if len(cluster_centers_desc) > 3:
+            centers_text += f" | ...共{len(cluster_centers_desc)}組"
+        
+        algorithm_steps.append({
+            'step': step_counter,
+            'name': 'DBSCAN 密度聚類',
+            'description': f'找到 {n_clusters} 組，{n_noise} 噪聲點 | 中心點: {centers_text}',
+            'timestamp': float(time.time()),
+            'affected_by': ['cluster_radius', 'min_samples', 'metric'],
+            'data': {
+                'method': 'DBSCAN',
+                'parameters': {
+                    'eps': eps_distance,
+                    'min_samples': min_samples,
+                    'metric': metric,
+                    'radius_km': cluster_radius
+                },
+                'result': {
+                    'n_clusters': int(n_clusters),
+                    'n_noise': int(n_noise),
+                    'clusters': dbscan_clusters,
+                    'centers': dbscan_centers
+                },
+                'stats': {
+                    'total_groups': int(n_clusters),
+                    'noise_points': int(n_noise),
+                    'clustered_points': int(n_orders - n_noise)
+                }
+            }
+        })
+        
         # 處理噪聲點（label = -1）：將它們分配到最近的群組
         noise_indices = np.where(cluster_labels == -1)[0]
+        noise_reassignments = []
+        
         if len(noise_indices) > 0:
             print(f"[INFO] 發現 {len(noise_indices)} 個孤立點，分配到最近的群組...")
+            step_counter += 1
+            
             for idx in noise_indices:
                 point = coords[idx]
                 # 找到最近的非噪聲點
@@ -245,9 +336,63 @@ def calculate_route():
                                for i in range(len(coords)) if cluster_labels[i] != -1]
                     if distances:
                         nearest_idx = [i for i in range(len(coords)) if cluster_labels[i] != -1][np.argmin(distances)]
-                        cluster_labels[idx] = cluster_labels[nearest_idx]
+                        old_label = cluster_labels[idx]
+                        new_label = cluster_labels[nearest_idx]
+                        cluster_labels[idx] = new_label
+                        
+                        # 計算目標群組的中心點
+                        target_cluster_points = [(valid_orders[i]['lat'], valid_orders[i]['lon']) 
+                                               for i in range(len(cluster_labels)) if cluster_labels[i] == new_label]
+                        target_center_lat = sum(p[0] for p in target_cluster_points) / len(target_cluster_points)
+                        target_center_lon = sum(p[1] for p in target_cluster_points) / len(target_cluster_points)
+                        
+                        noise_reassignments.append({
+                            'order_index': int(idx),
+                            'tracking_number': valid_orders[idx]['tracking_number'],
+                            'lat': float(valid_orders[idx]['lat']),
+                            'lon': float(valid_orders[idx]['lon']),
+                            'old_label': int(old_label),
+                            'new_label': int(new_label),
+                            'distance_to_cluster': float(min(distances)),
+                            'target_center': {
+                                'lat': float(target_center_lat),
+                                'lon': float(target_center_lon)
+                            }
+                        })
                 else:
                     cluster_labels[idx] = 0  # 如果沒有其他群組，創建新群組
+            
+            # 記錄步驟 2：噪聲點重新分配
+            # 生成分配目標摘要
+            reassignment_summary = {}
+            for ra in noise_reassignments:
+                target_label = ra['new_label']
+                if target_label not in reassignment_summary:
+                    reassignment_summary[target_label] = {
+                        'count': 0,
+                        'center': ra['target_center']
+                    }
+                reassignment_summary[target_label]['count'] += 1
+            
+            summary_text = " | ".join([
+                f"群組{label}: ({info['center']['lat']:.5f}, {info['center']['lon']:.5f}), {info['count']}點"
+                for label, info in list(reassignment_summary.items())[:2]
+            ])
+            if len(reassignment_summary) > 2:
+                summary_text += f" | ...共分配到{len(reassignment_summary)}個群組"
+            
+            algorithm_steps.append({
+                'step': step_counter,
+                'name': '噪聲點處理',
+                'description': f'{len(noise_indices)} 孤立點 → {summary_text}',
+                'timestamp': float(time.time()),
+                'affected_by': ['cluster_radius', 'min_samples'],
+                'data': {
+                    'noise_count': int(len(noise_indices)),
+                    'reassignments': noise_reassignments,
+                    'summary': reassignment_summary
+                }
+            })
         
         # 將訂單按群組分類
         initial_clusters = {}
@@ -258,32 +403,121 @@ def calculate_route():
         
         print(f"[INFO] DBSCAN 完成，初步分成 {len(initial_clusters)} 組")
         
-        # 步驟 2: 對大群組進行二次分割（用 K-means）
+        # 步驟 3: 對大群組進行二次分割（用 K-means）
+        step_counter += 1
         clusters = {}
         cluster_id = 0
+        kmeans_operations = []
         
         for label, orders in initial_clusters.items():
             if len(orders) <= max_group_size:
                 # 群組夠小，直接使用
                 clusters[cluster_id] = orders
                 print(f"  群組 {cluster_id}: {len(orders)} 個訂單（保持）")
+                
+                # 計算中心點
+                center_lat = sum(o['lat'] for o in orders) / len(orders)
+                center_lon = sum(o['lon'] for o in orders) / len(orders)
+                
+                kmeans_operations.append({
+                    'original_label': int(label),
+                    'action': 'keep',
+                    'size': int(len(orders)),
+                    'final_cluster_id': int(cluster_id),
+                    'center': {
+                        'lat': float(center_lat),
+                        'lon': float(center_lon)
+                    }
+                })
                 cluster_id += 1
             else:
                 # 群組太大，用 K-means 細分
                 n_sub_clusters = (len(orders) + max_group_size - 1) // max_group_size  # 向上取整
                 print(f"  群組 {label} 有 {len(orders)} 個訂單，細分成 {n_sub_clusters} 個子群組...")
                 
+                # 計算原始群組中心點
+                orig_center_lat = sum(o['lat'] for o in orders) / len(orders)
+                orig_center_lon = sum(o['lon'] for o in orders) / len(orders)
+                
                 sub_coords = np.array([[o['lat'], o['lon']] for o in orders])
                 kmeans = KMeans(n_clusters=n_sub_clusters, random_state=random_state, n_init=n_init)
                 sub_labels = kmeans.fit_predict(sub_coords)
+                
+                split_info = {
+                    'original_label': int(label),
+                    'action': 'split',
+                    'original_size': int(len(orders)),
+                    'original_center': {
+                        'lat': float(orig_center_lat),
+                        'lon': float(orig_center_lon)
+                    },
+                    'n_sub_clusters': int(n_sub_clusters),
+                    'sub_clusters': []
+                }
                 
                 for sub_label in range(n_sub_clusters):
                     sub_orders = [orders[i] for i in range(len(orders)) if sub_labels[i] == sub_label]
                     clusters[cluster_id] = sub_orders
                     print(f"    子群組 {cluster_id}: {len(sub_orders)} 個訂單")
+                    
+                    sub_center_lat = np.mean([o['lat'] for o in sub_orders])
+                    sub_center_lon = np.mean([o['lon'] for o in sub_orders])
+                    
+                    split_info['sub_clusters'].append({
+                        'final_cluster_id': int(cluster_id),
+                        'size': int(len(sub_orders)),
+                        'center': {
+                            'lat': float(sub_center_lat),
+                            'lon': float(sub_center_lon)
+                        }
+                    })
                     cluster_id += 1
+                
+                kmeans_operations.append(split_info)
         
         print(f"[INFO] 最終分成 {len(clusters)} 組")
+        
+        # 記錄步驟 3：K-means 細分
+        # 生成細分操作摘要
+        split_ops = [op for op in kmeans_operations if op['action'] == 'split']
+        split_summary = []
+        for op in split_ops[:2]:  # 只顯示前2個
+            orig_center = op['original_center']
+            sub_centers_text = ", ".join([
+                f"({sc['center']['lat']:.5f}, {sc['center']['lon']:.5f})"
+                for sc in op['sub_clusters'][:2]
+            ])
+            if len(op['sub_clusters']) > 2:
+                sub_centers_text += f" ...共{len(op['sub_clusters'])}個"
+            split_summary.append(f"群組{op['original_label']}({orig_center['lat']:.5f}, {orig_center['lon']:.5f}) → {sub_centers_text}")
+        
+        summary_desc = " | ".join(split_summary)
+        if len(split_ops) > 2:
+            summary_desc += f" | ...共細分{len(split_ops)}組"
+        elif len(split_ops) == 0:
+            summary_desc = f"所有群組都在 {max_group_size} 個訂單內，無需細分"
+        
+        algorithm_steps.append({
+            'step': step_counter,
+            'name': 'K-means 細分大群組',
+            'description': summary_desc,
+            'timestamp': float(time.time()),
+            'affected_by': ['max_group_size', 'random_state', 'n_init'],
+            'data': {
+                'max_group_size': int(max_group_size),
+                'operations': kmeans_operations,
+                'final_clusters': {
+                    str(int(cid)): [{'lat': float(o['lat']), 'lon': float(o['lon']), 'tracking_number': o['tracking_number']} for o in orders]
+                    for cid, orders in clusters.items()
+                },
+                'stats': {
+                    'initial_groups': int(len(initial_clusters)),
+                    'final_groups': int(len(clusters)),
+                    'kept_groups': int(len([op for op in kmeans_operations if op['action'] == 'keep'])),
+                    'split_groups': int(len([op for op in kmeans_operations if op['action'] == 'split']))
+                }
+            }
+        })
         
         # 計算每個群組的中心點
         cluster_centers = {}
@@ -676,7 +910,62 @@ def calculate_route():
                     'lon': order['lon']
                 })
         
+        # 記錄步驟：群組排序完成
+        step_counter += 1
+        group_order_info = []
+        for idx, label in enumerate(cluster_order):
+            group_name = group_names[idx] if idx < len(group_names) else f"Z{idx-25}"
+            center = cluster_centers[label]
+            group_order_info.append({
+                'group': group_name,
+                'cluster_id': int(label),
+                'size': int(len(clusters[label])),
+                'center': {
+                    'lat': float(center[0]),
+                    'lon': float(center[1])
+                }
+            })
+        
+        # 生成群組順序描述
+        group_desc = " → ".join([f"{g['group']}({g['size']})" for g in group_order_info[:5]])
+        if len(group_order_info) > 5:
+            group_desc += f" → ...共{len(group_order_info)}組"
+        
+        algorithm_steps.append({
+            'step': step_counter,
+            'name': '群組排序',
+            'description': f'使用 {group_order_method} 方法排序 {len(cluster_order)} 個群組 | {group_desc}',
+            'timestamp': float(time.time()),
+            'affected_by': ['group_order_method', 'verification', 'group_penalty', 'check_highways'],
+            'data': {
+                'method': group_order_method,
+                'total_groups': int(len(cluster_order)),
+                'group_order': group_order_info,
+                'cluster_centers': {str(int(label)): {'lat': float(center[0]), 'lon': float(center[1])} 
+                                   for label, center in cluster_centers.items()}
+            }
+        })
+        
         print(f"[INFO] 路線計算完成，共 {len(optimized_orders)} 個訂單，分成 {len(cluster_order)} 組")
+        
+        # 記錄最終步驟：完成所有排序
+        step_counter += 1
+        algorithm_steps.append({
+            'step': step_counter,
+            'name': '完成訂單排序',
+            'description': f'所有 {len(optimized_orders)} 個訂單已排序完成',
+            'timestamp': float(time.time()),
+            'affected_by': ['inner_order_method', 'verification', 'inner_penalty', 'check_highways'],
+            'data': {
+                'total_orders': int(len(optimized_orders)),
+                'total_groups': int(len(cluster_order)),
+                'final_sequence': optimized_orders,  # 已經是純 Python dict，不需轉換
+                'group_order': [{'group': group_names[idx] if idx < len(group_names) else f"Z{idx-25}", 
+                                'cluster_id': int(label), 
+                                'size': int(len(clusters[label]))} 
+                               for idx, label in enumerate(cluster_order)]
+            }
+        })
         
         # 步驟 4.5: 處理終點設置
         print(f"[DEBUG] 終點模式: {end_point_mode}, 終點座標: {end_point}")
@@ -736,7 +1025,8 @@ def calculate_route():
             'total_orders': len(optimized_orders),
             'total_groups': len(cluster_order),
             'crossings': crossings,
-            'verification_method': verification
+            'verification_method': verification,
+            'algorithm_steps': algorithm_steps  # 新增：演算法步驟記錄
         })
         
         

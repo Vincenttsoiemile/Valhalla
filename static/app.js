@@ -395,6 +395,12 @@ document.getElementById('calculateBtn').addEventListener('click', async function
             console.log('預加載已停用，跳過路線加載');
         }
         
+        // 處理演算法步驟（如果有）
+        if (data1.algorithm_steps && data1.algorithm_steps.length > 0) {
+            console.log('演算法步驟數據:', data1.algorithm_steps);
+            initAlgorithmViewer(data1.algorithm_steps, data1);
+        }
+        
         // 顯示完成提示
         showSuccessAlert();
         
@@ -1833,4 +1839,512 @@ document.addEventListener('DOMContentLoaded', function() {
 
     console.log('✅ 設定複製/導入按鈕已註冊');
 });
+
+// ========== 演算法步驟視覺化 ==========
+
+let algorithmSteps = [];
+let currentAlgorithmStep = 0;
+let algorithmResultData = null;
+
+// 初始化演算法視覺化器
+function initAlgorithmViewer(steps, resultData) {
+    algorithmSteps = steps;
+    algorithmResultData = resultData;
+    currentAlgorithmStep = steps.length - 1; // 默認顯示最後一步
+    
+    const progressBar = document.getElementById('algorithmProgressBar');
+    const slider = document.getElementById('algoStepSlider');
+    
+    // 設置 slider 範圍
+    slider.min = 0;
+    slider.max = steps.length - 1;
+    slider.value = currentAlgorithmStep;
+    
+    // 顯示進度條
+    progressBar.style.display = 'flex';
+    
+    // 更新顯示
+    updateAlgorithmStepDisplay();
+    
+    // 綁定事件
+    bindAlgorithmEvents();
+    
+    console.log('✅ 演算法視覺化器已初始化，共', steps.length, '個步驟');
+}
+
+// 綁定演算法控制事件
+function bindAlgorithmEvents() {
+    const slider = document.getElementById('algoStepSlider');
+    const prevBtn = document.getElementById('algoPrevBtn');
+    const nextBtn = document.getElementById('algoNextBtn');
+    const closeBtn = document.getElementById('algoCloseBtn');
+    
+    // Slider 拖動事件
+    slider.addEventListener('input', function() {
+        currentAlgorithmStep = parseInt(this.value);
+        updateAlgorithmStepDisplay();
+        visualizeAlgorithmStep(currentAlgorithmStep);
+    });
+    
+    // Previous 按鈕
+    prevBtn.addEventListener('click', function() {
+        if (currentAlgorithmStep > 0) {
+            currentAlgorithmStep--;
+            slider.value = currentAlgorithmStep;
+            updateAlgorithmStepDisplay();
+            visualizeAlgorithmStep(currentAlgorithmStep);
+        }
+    });
+    
+    // Next 按鈕
+    nextBtn.addEventListener('click', function() {
+        if (currentAlgorithmStep < algorithmSteps.length - 1) {
+            currentAlgorithmStep++;
+            slider.value = currentAlgorithmStep;
+            updateAlgorithmStepDisplay();
+            visualizeAlgorithmStep(currentAlgorithmStep);
+        }
+    });
+    
+    // Close 按鈕
+    closeBtn.addEventListener('click', function() {
+        const progressBar = document.getElementById('algorithmProgressBar');
+        progressBar.style.display = 'none';
+        
+        // 恢復最終結果顯示
+        if (algorithmResultData) {
+            const sequenceMode = currentConfig.sequenceMode || 'grouped';
+            drawRoute(algorithmResultData, sequenceMode);
+        }
+    });
+}
+
+// 更新步驟顯示
+function updateAlgorithmStepDisplay() {
+    const step = algorithmSteps[currentAlgorithmStep];
+    
+    document.getElementById('algoStepNumber').textContent = 
+        `(${currentAlgorithmStep + 1}/${algorithmSteps.length})`;
+    
+    const stepNameElement = document.getElementById('algoStepName');
+    stepNameElement.textContent = step.name;
+    
+    const descElement = document.getElementById('algoStepDescription');
+    const tooltip = document.getElementById('algoTooltip');
+    
+    descElement.textContent = step.description;
+    
+    // 移除舊的事件監聽器
+    const newDescElement = descElement.cloneNode(true);
+    descElement.parentNode.replaceChild(newDescElement, descElement);
+    
+    // 添加 hover tooltip 顯示影響參數
+    if (step.affected_by && step.affected_by.length > 0) {
+        newDescElement.style.cursor = 'help';
+        
+        // 添加視覺提示（小圖示）
+        const infoIcon = document.createElement('span');
+        infoIcon.textContent = ' ⓘ';
+        infoIcon.style.color = '#3498db';
+        infoIcon.style.fontSize = '14px';
+        infoIcon.style.fontWeight = 'bold';
+        infoIcon.style.cursor = 'help';
+        
+        newDescElement.appendChild(infoIcon);
+        
+        // 鼠標移入顯示
+        newDescElement.addEventListener('mouseenter', function() {
+            const params = step.affected_by.map(p => 
+                `<span class="param-item">${p}</span>`
+            ).join('');
+            tooltip.innerHTML = `<div style="font-weight: 600; margin-bottom: 4px;">⚙️ 影響參數:</div>${params}`;
+            tooltip.style.display = 'block';
+        });
+        
+        // 鼠標移出隱藏
+        newDescElement.addEventListener('mouseleave', function() {
+            tooltip.style.display = 'none';
+        });
+    } else {
+        newDescElement.style.cursor = 'default';
+    }
+    
+    // 更新按鈕狀態
+    document.getElementById('algoPrevBtn').disabled = (currentAlgorithmStep === 0);
+    document.getElementById('algoNextBtn').disabled = (currentAlgorithmStep === algorithmSteps.length - 1);
+}
+
+// 視覺化當前步驟
+function visualizeAlgorithmStep(stepIndex) {
+    const step = algorithmSteps[stepIndex];
+    
+    console.log('視覺化步驟:', step.name, step.data);
+    
+    // 清除地圖上的舊標記
+    clearOrderMarkers();
+    
+    switch(step.name) {
+        case '初始化':
+            visualizeInitialOrders(step.data);
+            break;
+        case 'DBSCAN 密度聚類':
+            visualizeDBSCANClusters(step.data);
+            break;
+        case '噪聲點處理':
+            visualizeNoiseReassignment(step.data, algorithmSteps[stepIndex - 1].data);
+            break;
+        case 'K-means 細分大群組':
+            visualizeKMeansClusters(step.data);
+            break;
+        case '群組排序':
+            visualizeGroupOrdering(step.data);
+            break;
+        case '完成訂單排序':
+            visualizeFinalSequence(step.data);
+            break;
+        default:
+            console.warn('未知的步驟類型:', step.name);
+    }
+}
+
+// 視覺化初始訂單
+function visualizeInitialOrders(data) {
+    if (!data.orders) return;
+    
+    // 顯示所有訂單為灰色點
+    data.orders.forEach((order, idx) => {
+        const marker = L.circleMarker([order.lat, order.lon], {
+            radius: 6,
+            color: '#95a5a6',
+            fillColor: '#95a5a6',
+            fillOpacity: 0.6,
+            weight: 2
+        }).addTo(map);
+        
+        marker.bindPopup(`
+            <div class="popup-title">訂單 ${idx + 1}</div>
+            <div class="popup-tracking">${order.tracking_number}</div>
+        `);
+        
+        orderMarkers.push(marker);
+    });
+}
+
+// 視覺化 DBSCAN 聚類結果
+function visualizeDBSCANClusters(data) {
+    if (!data.result || !data.result.clusters) return;
+    
+    const clusters = data.result.clusters;
+    const centers = data.result.centers || {};
+    const colors = [
+        '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', 
+        '#1abc9c', '#e67e22', '#34495e', '#16a085', '#c0392b'
+    ];
+    
+    let allOrders = [];
+    
+    Object.entries(clusters).forEach(([label, orders]) => {
+        const color = label === '-1' ? '#95a5a6' : colors[parseInt(label) % colors.length];
+        const isNoise = label === '-1';
+        
+        orders.forEach((order, idx) => {
+            const marker = L.circleMarker([order.lat, order.lon], {
+                radius: isNoise ? 4 : 8,
+                color: color,
+                fillColor: color,
+                fillOpacity: isNoise ? 0.4 : 0.7,
+                weight: isNoise ? 1 : 3
+            }).addTo(map);
+            
+            marker.bindPopup(`
+                <div class="popup-title">${isNoise ? '噪聲點' : `群組 ${label}`}</div>
+                <div class="popup-tracking">${order.tracking_number}</div>
+            `);
+            
+            orderMarkers.push(marker);
+            allOrders.push(order);
+        });
+        
+        // 顯示群組中心點（排除噪聲點）
+        if (!isNoise && centers[label]) {
+            const center = centers[label];
+            const centerIcon = L.divIcon({
+                className: 'center-marker',
+                html: `<div style="
+                    background: ${color};
+                    width: 24px;
+                    height: 24px;
+                    border: 3px solid white;
+                    border-radius: 50%;
+                    box-shadow: 0 3px 8px rgba(0,0,0,0.5);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-size: 16px;
+                    font-weight: bold;
+                ">⊕</div>`,
+                iconSize: [24, 24],
+                iconAnchor: [12, 12]
+            });
+            
+            const centerMarker = L.marker([center.lat, center.lon], {
+                icon: centerIcon,
+                zIndexOffset: 1000
+            }).addTo(map);
+            
+            centerMarker.bindPopup(`
+                <div class="popup-title">🎯 群組 ${label} 中心點</div>
+                <div style="font-size: 12px; color: #555;">
+                    座標: (${center.lat.toFixed(5)}, ${center.lon.toFixed(5)})<br>
+                    訂單數: ${center.count}
+                </div>
+            `);
+            
+            orderMarkers.push(centerMarker);
+        }
+    });
+}
+
+// 視覺化噪聲點重新分配
+function visualizeNoiseReassignment(data, previousData) {
+    // 先顯示 DBSCAN 的結果
+    visualizeDBSCANClusters(previousData);
+    
+    // 高亮顯示被重新分配的噪聲點
+    if (data.reassignments) {
+        data.reassignments.forEach(reassignment => {
+            const marker = L.circleMarker([reassignment.lat, reassignment.lon], {
+                radius: 10,
+                color: '#ffc107',
+                fillColor: '#ffc107',
+                fillOpacity: 0.8,
+                weight: 4
+            }).addTo(map);
+            
+            marker.bindPopup(`
+                <div class="popup-title">重新分配的噪聲點</div>
+                <div class="popup-tracking">${reassignment.tracking_number}</div>
+                <div style="font-size: 11px; margin-top: 4px;">
+                    從噪聲 → 群組 ${reassignment.new_label}
+                </div>
+            `);
+            
+            orderMarkers.push(marker);
+        });
+    }
+}
+
+// 視覺化 K-means 細分結果
+function visualizeKMeansClusters(data) {
+    if (!data.final_clusters) return;
+    
+    const clusters = data.final_clusters;
+    const operations = data.operations || [];
+    const colors = [
+        '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', 
+        '#1abc9c', '#e67e22', '#34495e', '#16a085', '#c0392b',
+        '#d35400', '#8e44ad', '#27ae60', '#2980b9', '#c0392b'
+    ];
+    
+    const groupNames = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J',
+                       'K', 'L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T',
+                       'U', 'V', 'W', 'X', 'Y', 'Z'];
+    
+    // 建立 clusterId 到中心點的映射
+    const centerMap = {};
+    operations.forEach(op => {
+        if (op.action === 'keep' && op.center) {
+            centerMap[op.final_cluster_id] = op.center;
+        } else if (op.action === 'split' && op.sub_clusters) {
+            op.sub_clusters.forEach(sub => {
+                centerMap[sub.final_cluster_id] = sub.center;
+            });
+        }
+    });
+    
+    let allOrders = [];
+    
+    Object.entries(clusters).forEach(([clusterId, orders]) => {
+        const color = colors[parseInt(clusterId) % colors.length];
+        const groupName = groupNames[parseInt(clusterId)] || clusterId;
+        
+        orders.forEach((order, idx) => {
+            const marker = L.circleMarker([order.lat, order.lon], {
+                radius: 8,
+                color: color,
+                fillColor: color,
+                fillOpacity: 0.7,
+                weight: 3
+            }).addTo(map);
+            
+            marker.bindPopup(`
+                <div class="popup-title">群組 ${groupName}</div>
+                <div class="popup-tracking">${order.tracking_number}</div>
+            `);
+            
+            orderMarkers.push(marker);
+            allOrders.push(order);
+        });
+        
+        // 顯示群組中心點
+        const center = centerMap[parseInt(clusterId)];
+        if (center) {
+            const centerIcon = L.divIcon({
+                className: 'center-marker',
+                html: `<div style="
+                    background: ${color};
+                    width: 28px;
+                    height: 28px;
+                    border: 3px solid white;
+                    border-radius: 50%;
+                    box-shadow: 0 3px 8px rgba(0,0,0,0.5);
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    color: white;
+                    font-size: 14px;
+                    font-weight: bold;
+                ">${groupName}</div>`,
+                iconSize: [28, 28],
+                iconAnchor: [14, 14]
+            });
+            
+            const centerMarker = L.marker([center.lat, center.lon], {
+                icon: centerIcon,
+                zIndexOffset: 1000
+            }).addTo(map);
+            
+            centerMarker.bindPopup(`
+                <div class="popup-title">🎯 群組 ${groupName} 中心點</div>
+                <div style="font-size: 12px; color: #555;">
+                    座標: (${center.lat.toFixed(5)}, ${center.lon.toFixed(5)})<br>
+                    訂單數: ${orders.length}
+                </div>
+            `);
+            
+            orderMarkers.push(centerMarker);
+        }
+    });
+}
+
+// 視覺化群組排序
+function visualizeGroupOrdering(data) {
+    if (!data.group_order || !data.cluster_centers) return;
+    
+    const groupOrder = data.group_order;
+    const centers = data.cluster_centers;
+    const colors = [
+        '#e74c3c', '#3498db', '#2ecc71', '#f39c12', '#9b59b6', 
+        '#1abc9c', '#e67e22', '#34495e', '#16a085', '#c0392b',
+        '#d35400', '#8e44ad', '#27ae60', '#2980b9', '#c0392b'
+    ];
+    
+    // 繪製群組中心點並標示順序
+    groupOrder.forEach((groupInfo, idx) => {
+        const center = groupInfo.center;
+        if (!center) return;
+        
+        const color = colors[idx % colors.length];
+        
+        // 群組中心點標記
+        const centerIcon = L.divIcon({
+            className: 'group-ordering-marker',
+            html: `<div style="
+                background: ${color};
+                width: 40px;
+                height: 40px;
+                border: 4px solid white;
+                border-radius: 50%;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.6);
+                display: flex;
+                align-items: center;
+                justify-content: center;
+                color: white;
+                font-size: 18px;
+                font-weight: bold;
+            ">${groupInfo.group}</div>`,
+            iconSize: [40, 40],
+            iconAnchor: [20, 20]
+        });
+        
+        const marker = L.marker([center.lat, center.lon], {
+            icon: centerIcon,
+            zIndexOffset: 1000
+        }).addTo(map);
+        
+        marker.bindPopup(`
+            <div class="popup-title">群組 ${groupInfo.group} (順序 #${idx + 1})</div>
+            <div style="font-size: 12px; color: #555;">
+                座標: (${center.lat.toFixed(5)}, ${center.lon.toFixed(5)})<br>
+                訂單數: ${groupInfo.size}<br>
+                群組ID: ${groupInfo.cluster_id}
+            </div>
+        `);
+        
+        orderMarkers.push(marker);
+        
+        // 添加順序標籤（在標記旁邊）
+        const labelIcon = L.divIcon({
+            className: 'sequence-label',
+            html: `<div style="
+                background: rgba(0,0,0,0.7);
+                color: white;
+                padding: 4px 8px;
+                border-radius: 12px;
+                font-size: 12px;
+                font-weight: bold;
+                white-space: nowrap;
+                box-shadow: 0 2px 6px rgba(0,0,0,0.4);
+            ">#${idx + 1}</div>`,
+            iconSize: [30, 20],
+            iconAnchor: [-10, 30]
+        });
+        
+        const labelMarker = L.marker([center.lat, center.lon], {
+            icon: labelIcon,
+            zIndexOffset: 999
+        }).addTo(map);
+        
+        orderMarkers.push(labelMarker);
+    });
+    
+    // 繪製連接線顯示順序
+    if (groupOrder.length > 1) {
+        const lineCoords = groupOrder
+            .filter(g => g.center)
+            .map(g => [g.center.lat, g.center.lon]);
+        
+        const polyline = L.polyline(lineCoords, {
+            color: '#2c3e50',
+            weight: 3,
+            opacity: 0.6,
+            dashArray: '10, 10',
+            smoothFactor: 1
+        }).addTo(map);
+        
+        orderMarkers.push(polyline);
+    }
+    
+    // 調整地圖視角以顯示所有群組
+    if (groupOrder.length > 0) {
+        const bounds = L.latLngBounds(
+            groupOrder
+                .filter(g => g.center)
+                .map(g => [g.center.lat, g.center.lon])
+        );
+        map.fitBounds(bounds, { padding: [50, 50] });
+    }
+}
+
+// 視覺化最終排序
+function visualizeFinalSequence(data) {
+    if (!algorithmResultData) return;
+    
+    // 使用最終結果繪製路徑
+    const sequenceMode = currentConfig.sequenceMode || 'grouped';
+    drawRoute(algorithmResultData, sequenceMode);
+}
+
+console.log('✅ 演算法視覺化模組已載入');
 

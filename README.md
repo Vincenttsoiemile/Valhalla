@@ -697,11 +697,11 @@ pip install -r requirements.txt
 
 # 4. 設定資料庫連接（編輯 app.py）
 DB_CONFIG = {
-    'host': 'localhost',
-    'port': 3306,
-    'user': 'root',
-    'password': 'your_password',
-    'database': 'your_database',
+    'host': '15.156.112.57',
+    'port': 33306,
+    'user': 'select-user',
+    'password': 'emile2024',
+    'database': 'bonddb',
     'charset': 'utf8mb4'
 }
 ```
@@ -1407,5 +1407,13 @@ pip install ortools python-tsp
 | 1000+ | 分組模式 | Nearest (組內) | < 10秒 |
 
 ---
+
+## 更新日誌
+
+### 2025-10-24
+- 🔧 **資料庫連接更新**
+  - Host: 15.156.112.57:33306
+  - User: select-user
+  - Database: bonddb
 
 **最後更新：2025-10-06 v4.0 - 新增 TSP 優化算法**

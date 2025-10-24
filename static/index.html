@@ -469,6 +469,26 @@
                 </div>
             </div>
             
+            <!-- 演算法步驟進度條 -->
+            <div id="algorithmProgressBar" class="algorithm-progress-bar" style="display: none;">
+                <button id="algoPrevBtn" class="algo-btn-arrow algo-prev">◀</button>
+                <div class="algo-slider-container">
+                    <input type="range" id="algoStepSlider" class="algo-slider" min="0" max="4" value="4" step="1">
+                    <div class="algo-step-label">
+                        <span class="algo-step-title">
+                            <strong id="algoStepName">初始化</strong>
+                            <span id="algoStepDescription">載入訂單座標</span>
+                        </span>
+                        <span id="algoStepNumber">(1/5)</span>
+                    </div>
+                </div>
+                <button id="algoNextBtn" class="algo-btn-arrow algo-next">▶</button>
+                <button id="algoCloseBtn" class="algo-btn-close">✕</button>
+                
+                <!-- 自定義 Tooltip -->
+                <div id="algoTooltip" class="algo-tooltip" style="display: none;"></div>
+            </div>
+            
             <!-- 地圖 2: Delivery Sequence 順序 -->
             <div class="map-wrapper">
                 <div class="map-header">地圖 2: Delivery Sequence 順序</div>
