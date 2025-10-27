@@ -644,7 +644,7 @@ function drawSequenceMap(data) {
     
     // 在地圖2上顯示訂單標記
     data.orders.forEach((order, index) => {
-        const displaySeq = order.delivery_sequence;
+        const displaySeq = order.delivery_sequence_original || order.delivery_sequence;
         
         // 統一藍色
         const bgColor = '#3498db';
@@ -694,6 +694,10 @@ function updateCalculateButton() {
     document.getElementById('calculateBtn').disabled = !(hasStart && hasOrderGroup);
 }
 
+// 進度步驟管理
+let progressInterval = null;
+let currentStep = 0;
+
 // 顯示/隱藏載入中（全屏版本）
 function showLoading(show) {
     const fullScreenLoading = document.getElementById('fullScreenLoading');
@@ -704,6 +708,108 @@ function showLoading(show) {
     const oldLoadingPanel = document.getElementById('loadingPanel');
     if (oldLoadingPanel) {
         oldLoadingPanel.style.display = 'none';
+    }
+    
+    if (show) {
+        startProgressAnimation();
+    } else {
+        stopProgressAnimation();
+    }
+}
+
+// 開始進度動畫
+function startProgressAnimation() {
+    currentStep = 0;
+    
+    // 重置所有步驟
+    const steps = document.querySelectorAll('.step-item');
+    steps.forEach(step => {
+        step.classList.remove('active', 'completed');
+        const icon = step.querySelector('.step-icon');
+        icon.textContent = '⏳';
+    });
+    
+    // 立即激活第一步
+    updateStep(0, 'active');
+    
+    // 根據訂單數量估算時間
+    const orderGroup = document.getElementById('orderGroupInput').value;
+    const optimizationMode = document.getElementById('optimizationMode').value;
+    
+    // 估算每個步驟的時間（毫秒）
+    let stepTimings = [
+        500,   // 載入訂單資料
+        2000,  // DBSCAN 聚類
+        1000,  // 處理噪聲點
+        1500,  // K-means 細分
+        2000,  // 群組排序
+        1500,  // 組內排序
+        1000   // 跨河檢測
+    ];
+    
+    // 如果是全局優化模式，調整時間
+    if (optimizationMode === 'global') {
+        stepTimings = [
+            500,   // 載入訂單資料
+            3000,  // 全局 TSP 優化（較長）
+            0,     // 跳過
+            0,     // 跳過
+            0,     // 跳過
+            0,     // 跳過
+            1000   // 驗證
+        ];
+    }
+    
+    let totalTime = 0;
+    progressInterval = [];
+    
+    stepTimings.forEach((timing, index) => {
+        if (timing > 0) {
+            totalTime += timing;
+            const timer = setTimeout(() => {
+                if (index > 0) {
+                    updateStep(index - 1, 'completed');
+                }
+                updateStep(index, 'active');
+            }, totalTime);
+            progressInterval.push(timer);
+        }
+    });
+}
+
+// 停止進度動畫
+function stopProgressAnimation() {
+    if (progressInterval && progressInterval.length > 0) {
+        progressInterval.forEach(timer => clearTimeout(timer));
+        progressInterval = [];
+    }
+    
+    // 標記所有步驟為完成
+    const steps = document.querySelectorAll('.step-item');
+    steps.forEach(step => {
+        step.classList.remove('active');
+        step.classList.add('completed');
+        const icon = step.querySelector('.step-icon');
+        icon.textContent = '✓';
+    });
+}
+
+// 更新單個步驟狀態
+function updateStep(stepIndex, status) {
+    const steps = document.querySelectorAll('.step-item');
+    if (stepIndex < steps.length) {
+        const step = steps[stepIndex];
+        const icon = step.querySelector('.step-icon');
+        
+        step.classList.remove('active', 'completed');
+        
+        if (status === 'active') {
+            step.classList.add('active');
+            icon.textContent = '⏳';
+        } else if (status === 'completed') {
+            step.classList.add('completed');
+            icon.textContent = '✓';
+        }
     }
 }
 

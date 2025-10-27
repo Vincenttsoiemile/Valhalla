@@ -34,7 +34,22 @@ def get_db_connection():
 @app.route('/')
 def index():
     """首頁"""
-    return send_from_directory('static', 'index.html')
+    response = send_from_directory('static', 'index.html')
+    # 禁用緩存以確保部署時立即更新
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
+
+@app.route('/static/<path:filename>')
+def serve_static(filename):
+    """服務靜態文件（禁用緩存）"""
+    response = send_from_directory('static', filename)
+    # 禁用緩存以確保部署時立即更新
+    response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['Pragma'] = 'no-cache'
+    response.headers['Expires'] = '0'
+    return response
 
 
 @app.route('/api/orders', methods=['GET'])
@@ -833,13 +848,39 @@ def calculate_route():
                     remaining.remove(nearest)
             
             elif inner_order_method in ['ortools', '2opt-inner', 'lkh']:
-                # 方法 2/3/4: 使用 TSP 求解器
+                # 方法 2/3/4: 使用 TSP 求解器（考慮障礙物懲罰）
                 # 準備座標（加上當前位置作為起點）
                 coords_with_start = [current_pos] + [(o['lat'], o['lon']) for o in group_orders]
                 
+                # 定義考慮障礙物的距離函數
+                def obstacle_aware_distance(i, j, coords):
+                    """計算兩點間距離，考慮障礙物懲罰"""
+                    lat1, lon1 = coords[i]
+                    lat2, lon2 = coords[j]
+                    
+                    # 基礎直線距離
+                    dist = calculate_distance(lat1, lon1, lat2, lon2)
+                    
+                    # 如果啟用障礙檢測，檢查並應用懲罰
+                    if river_detector:
+                        result = river_detector.check_obstacle_crossing(
+                            lat1, lon1, lat2, lon2,
+                            check_rivers=True,
+                            check_highways=check_highways
+                        )
+                        if result['crosses_any']:
+                            dist *= inner_penalty  # 應用懲罰係數
+                    
+                    return dist
+                
                 try:
-                    # 求解 TSP（起點索引 = 0）
-                    route_indices = solve_tsp(coords_with_start, method=inner_order_method, start_index=0)
+                    # 求解 TSP（起點索引 = 0），使用障礙物感知的距離函數
+                    route_indices = solve_tsp(
+                        coords_with_start, 
+                        method=inner_order_method, 
+                        start_index=0,
+                        distance_func=obstacle_aware_distance if river_detector else None
+                    )
                     
                     # 移除起點索引，調整為訂單索引
                     route_indices = [i - 1 for i in route_indices if i > 0]

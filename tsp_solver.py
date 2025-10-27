@@ -3,15 +3,18 @@
 
 import math
 import numpy as np
-from typing import List, Tuple, Dict
+from typing import List, Tuple, Dict, Optional, Callable
 
 
-def calculate_distance_matrix(coords: List[Tuple[float, float]]) -> np.ndarray:
+def calculate_distance_matrix(coords: List[Tuple[float, float]], 
+                              distance_func: Optional[Callable] = None) -> np.ndarray:
     """
-    計算座標間的距離矩陣（歐幾里得距離）
+    計算座標間的距離矩陣
     
     Args:
         coords: [(lat, lon), ...] 座標列表
+        distance_func: 可選的自定義距離函數 distance_func(i, j, coords) -> float
+                      如果提供，將使用此函數計算距離（可包含障礙物懲罰）
     
     Returns:
         距離矩陣 (n x n)
@@ -19,25 +22,35 @@ def calculate_distance_matrix(coords: List[Tuple[float, float]]) -> np.ndarray:
     n = len(coords)
     matrix = np.zeros((n, n))
     
-    for i in range(n):
-        for j in range(i + 1, n):
-            lat1, lon1 = coords[i]
-            lat2, lon2 = coords[j]
-            # 簡化：使用歐幾里得距離
-            dist = math.sqrt((lat2 - lat1)**2 + (lon2 - lon1)**2)
-            matrix[i][j] = dist
-            matrix[j][i] = dist
+    if distance_func:
+        # 使用自定義距離函數（例如考慮障礙物）
+        for i in range(n):
+            for j in range(i + 1, n):
+                dist = distance_func(i, j, coords)
+                matrix[i][j] = dist
+                matrix[j][i] = dist
+    else:
+        # 默認：歐幾里得距離
+        for i in range(n):
+            for j in range(i + 1, n):
+                lat1, lon1 = coords[i]
+                lat2, lon2 = coords[j]
+                # 簡化：使用歐幾里得距離
+                dist = math.sqrt((lat2 - lat1)**2 + (lon2 - lon1)**2)
+                matrix[i][j] = dist
+                matrix[j][i] = dist
     
     return matrix
 
 
-def solve_tsp_ortools(coords: List[Tuple[float, float]], start_index: int = 0) -> List[int]:
+def solve_tsp_ortools(coords: List[Tuple[float, float]], start_index: int = 0, distance_func: Optional[Callable] = None) -> List[int]:
     """
     使用 OR-Tools 求解 TSP
     
     Args:
         coords: [(lat, lon), ...] 座標列表
         start_index: 起點索引（默認 0）
+        distance_func: 可選的自定義距離函數（考慮障礙物）
     
     Returns:
         訪問順序的索引列表 [0, 3, 1, 2, ...]
@@ -49,7 +62,7 @@ def solve_tsp_ortools(coords: List[Tuple[float, float]], start_index: int = 0) -
         raise ImportError("OR-Tools 未安裝，請執行：pip install ortools")
     
     # 計算距離矩陣（轉為整數，OR-Tools 需要整數）
-    distance_matrix_float = calculate_distance_matrix(coords)
+    distance_matrix_float = calculate_distance_matrix(coords, distance_func)
     distance_matrix = (distance_matrix_float * 1000000).astype(int)  # 放大 10^6 倍
     
     n = len(coords)
@@ -96,13 +109,14 @@ def solve_tsp_ortools(coords: List[Tuple[float, float]], start_index: int = 0) -
     return route
 
 
-def solve_tsp_2opt(coords: List[Tuple[float, float]], start_index: int = 0) -> List[int]:
+def solve_tsp_2opt(coords: List[Tuple[float, float]], start_index: int = 0, distance_func: Optional[Callable] = None) -> List[int]:
     """
     使用 2-opt 局部搜索求解 TSP
     
     Args:
         coords: [(lat, lon), ...] 座標列表
         start_index: 起點索引（默認 0）
+        distance_func: 可選的自定義距離函數（考慮障礙物）
     
     Returns:
         訪問順序的索引列表
@@ -110,8 +124,8 @@ def solve_tsp_2opt(coords: List[Tuple[float, float]], start_index: int = 0) -> L
     n = len(coords)
     
     # 先用貪心生成初始解
-    route = greedy_tsp(coords, start_index)
-    distance_matrix = calculate_distance_matrix(coords)
+    route = greedy_tsp(coords, start_index, distance_func)
+    distance_matrix = calculate_distance_matrix(coords, distance_func)
     
     def calculate_route_cost(route):
         cost = 0
@@ -147,19 +161,20 @@ def solve_tsp_2opt(coords: List[Tuple[float, float]], start_index: int = 0) -> L
     return route
 
 
-def greedy_tsp(coords: List[Tuple[float, float]], start_index: int = 0) -> List[int]:
+def greedy_tsp(coords: List[Tuple[float, float]], start_index: int = 0, distance_func: Optional[Callable] = None) -> List[int]:
     """
     貪心最近鄰算法
     
     Args:
         coords: [(lat, lon), ...] 座標列表
         start_index: 起點索引（默認 0）
+        distance_func: 可選的自定義距離函數（考慮障礙物）
     
     Returns:
         訪問順序的索引列表
     """
     n = len(coords)
-    distance_matrix = calculate_distance_matrix(coords)
+    distance_matrix = calculate_distance_matrix(coords, distance_func)
     
     visited = set([start_index])
     route = [start_index]
@@ -338,7 +353,7 @@ def solve_tsp_greedy_with_end(coords: List[Tuple[float, float]], start_index: in
     return route
 
 
-def solve_tsp(coords: List[Tuple[float, float]], method: str = 'ortools', start_index: int = 0) -> List[int]:
+def solve_tsp(coords: List[Tuple[float, float]], method: str = 'ortools', start_index: int = 0, distance_func: Optional[Callable] = None) -> List[int]:
     """
     統一的 TSP 求解接口
     
@@ -346,6 +361,7 @@ def solve_tsp(coords: List[Tuple[float, float]], method: str = 'ortools', start_
         coords: [(lat, lon), ...] 座標列表
         method: 'nearest' | 'ortools' | '2opt-inner' | 'lkh'
         start_index: 起點索引（默認 0）
+        distance_func: 可選的自定義距離函數（考慮障礙物），簽名: distance_func(i, j, coords) -> float
     
     Returns:
         訪問順序的索引列表
@@ -354,14 +370,14 @@ def solve_tsp(coords: List[Tuple[float, float]], method: str = 'ortools', start_
         return list(range(len(coords)))
     
     if method == 'nearest':
-        return greedy_tsp(coords, start_index)
+        return greedy_tsp(coords, start_index, distance_func)
     elif method == 'ortools':
-        return solve_tsp_ortools(coords, start_index)
+        return solve_tsp_ortools(coords, start_index, distance_func)
     elif method == '2opt-inner':
-        return solve_tsp_2opt(coords, start_index)
+        return solve_tsp_2opt(coords, start_index, distance_func)
     elif method == 'lkh':
-        return solve_tsp_lkh(coords, start_index)
+        return solve_tsp_lkh(coords, start_index)  # LKH 暫不支援
     else:
         print(f"[WARN] 未知方法 {method}，使用 nearest neighbor")
-        return greedy_tsp(coords, start_index)
+        return greedy_tsp(coords, start_index, distance_func)
 

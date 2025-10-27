@@ -1327,3 +1327,68 @@ body {
     font-weight: 600;
 }
 
+/* 進度步驟樣式 */
+.progress-steps {
+    margin-top: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-width: 400px;
+    margin-left: auto;
+    margin-right: auto;
+}
+
+.step-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 10px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    border-radius: 8px;
+    transition: all 0.3s ease;
+    opacity: 0.5;
+}
+
+.step-item.active {
+    opacity: 1;
+    background: rgba(52, 152, 219, 0.2);
+    border-left: 4px solid #3498db;
+}
+
+.step-item.completed {
+    opacity: 0.7;
+    background: rgba(46, 204, 113, 0.15);
+}
+
+.step-item.completed .step-icon {
+    color: #2ecc71;
+}
+
+.step-item .step-icon {
+    font-size: 20px;
+    min-width: 24px;
+    text-align: center;
+    transition: all 0.3s ease;
+}
+
+.step-item.active .step-icon {
+    animation: pulse 1.5s ease-in-out infinite;
+}
+
+.step-item .step-text {
+    font-size: 13px;
+    color: white;
+    font-weight: 500;
+}
+
+@keyframes pulse {
+    0%, 100% {
+        transform: scale(1);
+        opacity: 1;
+    }
+    50% {
+        transform: scale(1.1);
+        opacity: 0.8;
+    }
+}
+
