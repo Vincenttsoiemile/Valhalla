@@ -17,7 +17,12 @@
       "Bash(git commit:*)",
       "Bash(gh repo create:*)",
       "Bash(gh repo view:*)",
-      "Bash(gh repo edit:*)"
+      "Bash(gh repo edit:*)",
+      "Bash(pip install:*)",
+      "Bash(ps:*)",
+      "Bash(pgrep:*)",
+      "Bash(touch:*)",
+      "Bash(xargs kill:*)"
     ],
     "deny": [],
     "ask": []

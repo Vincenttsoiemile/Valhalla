@@ -66,6 +66,7 @@ def solve_tsp_ortools(coords: List[Tuple[float, float]], start_index: int = 0, d
     distance_matrix = (distance_matrix_float * 1000000).astype(int)  # 放大 10^6 倍
     
     n = len(coords)
+    print(f"[INFO] OR-Tools TSP: {n} 個點，起點索引 {start_index}")
     
     # 創建路徑模型
     manager = pywrapcp.RoutingIndexManager(n, 1, start_index)
@@ -85,18 +86,34 @@ def solve_tsp_ortools(coords: List[Tuple[float, float]], start_index: int = 0, d
     search_parameters.first_solution_strategy = (
         routing_enums_pb2.FirstSolutionStrategy.PATH_CHEAPEST_ARC
     )
-    search_parameters.local_search_metaheuristic = (
-        routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
-    )
-    search_parameters.time_limit.seconds = 5  # 限制 5 秒
+    
+    # 根據問題大小調整求解策略
+    if n <= 20:
+        # 小問題：使用完整搜索
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GUIDED_LOCAL_SEARCH
+        )
+        search_parameters.time_limit.seconds = 5
+    elif n <= 40:
+        # 中等問題：使用較快的啟發式
+        search_parameters.local_search_metaheuristic = (
+            routing_enums_pb2.LocalSearchMetaheuristic.GREEDY_DESCENT
+        )
+        search_parameters.time_limit.seconds = 3
+    else:
+        # 大問題：只使用初始解，不做局部搜索
+        search_parameters.time_limit.seconds = 2
     
     # 求解
+    print(f"[INFO] OR-Tools 開始求解...")
     solution = routing.SolveWithParameters(search_parameters)
     
     if not solution:
         # 失敗時返回貪心順序
         print("[WARN] OR-Tools 求解失敗，使用貪心順序")
         return list(range(n))
+    
+    print(f"[INFO] OR-Tools 求解成功")
     
     # 提取路徑
     route = []
@@ -353,22 +370,83 @@ def solve_tsp_greedy_with_end(coords: List[Tuple[float, float]], start_index: in
     return route
 
 
+def solve_tsp_smart(orders: List[Dict], start_point: Dict, max_group_size: int = 15,
+                    initial_cluster_radius: float = 0.8, min_cluster_radius: float = 0.3,
+                    strict_group_order: bool = False, directional_constraint: bool = False,
+                    next_group_linkage: str = 'none', linkage_weight: float = 0.5) -> Dict:
+    """
+    使用智能路徑規劃演算法（Smart Route Planner）
+
+    這是全新的演算法，包含三個階段：
+    Stage 1: 智能 K-means 分組（動態調整）
+    Stage 2: 組別排序與重新命名（2-opt 或嚴格由近到遠）
+    Stage 3: 組內路徑優化（開放式 2-opt + 可選組間銜接 + 可選方向性約束）
+
+    Args:
+        orders: 訂單列表 [{lat, lon, ...}, ...]
+        start_point: 起始點 {lat, lon}
+        max_group_size: 每組最大訂單數（嚴格小於此值）
+        initial_cluster_radius: 初始群聚半徑
+        min_cluster_radius: 最小群聚半徑下限
+        strict_group_order: 是否啟用嚴格組別順序（由近到遠，不繞回）
+        directional_constraint: 是否啟用單向性約束（組內路徑朝向下一組中心）
+        next_group_linkage: 組間銜接策略 ('none', 'weighted', 'virtual_endpoint')
+        linkage_weight: 權重式銜接的權重（0.0-1.0）
+
+    Returns:
+        {
+            'route': [order_idx1, order_idx2, ...],  # 最終路徑
+            'groups': {'A': [indices], 'B': [...], ...},  # 分組結果
+            'total_distance': float,  # 總距離
+            'metadata': {...}  # 其他資訊
+        }
+    """
+    try:
+        from smart_route_planner import SmartRoutePlanner
+
+        # 建立規劃器
+        planner = SmartRoutePlanner(
+            max_group_size=max_group_size,
+            initial_cluster_radius=initial_cluster_radius,
+            min_cluster_radius=min_cluster_radius,
+            strict_group_order=strict_group_order,
+            directional_constraint=directional_constraint,
+            next_group_linkage=next_group_linkage,
+            linkage_weight=linkage_weight
+        )
+
+        # 執行規劃
+        result = planner.plan_route(orders, start_point)
+
+        return result
+
+    except ImportError as e:
+        print(f"[ERROR] 無法導入 SmartRoutePlanner: {e}")
+        print("[INFO] 請確保 smart_route_planner.py 存在且可訪問")
+        raise
+    except Exception as e:
+        print(f"[ERROR] SmartRoutePlanner 執行失敗: {e}")
+        raise
+
+
 def solve_tsp(coords: List[Tuple[float, float]], method: str = 'ortools', start_index: int = 0, distance_func: Optional[Callable] = None) -> List[int]:
     """
     統一的 TSP 求解接口
-    
+
     Args:
         coords: [(lat, lon), ...] 座標列表
-        method: 'nearest' | 'ortools' | '2opt-inner' | 'lkh'
+        method: 'nearest' | 'ortools' | '2opt-inner' | 'lkh' | 'smart'
         start_index: 起點索引（默認 0）
         distance_func: 可選的自定義距離函數（考慮障礙物），簽名: distance_func(i, j, coords) -> float
-    
+
     Returns:
         訪問順序的索引列表
+
+    注意：'smart' 方法需要使用 solve_tsp_smart() 函數，傳入完整的訂單資料
     """
     if len(coords) <= 1:
         return list(range(len(coords)))
-    
+
     if method == 'nearest':
         return greedy_tsp(coords, start_index, distance_func)
     elif method == 'ortools':
@@ -377,6 +455,10 @@ def solve_tsp(coords: List[Tuple[float, float]], method: str = 'ortools', start_
         return solve_tsp_2opt(coords, start_index, distance_func)
     elif method == 'lkh':
         return solve_tsp_lkh(coords, start_index)  # LKH 暫不支援
+    elif method == 'smart':
+        print("[WARN] 'smart' 方法需要使用 solve_tsp_smart() 函數")
+        print("[INFO] 回退到 2-opt 方法")
+        return solve_tsp_2opt(coords, start_index, distance_func)
     else:
         print(f"[WARN] 未知方法 {method}，使用 nearest neighbor")
         return greedy_tsp(coords, start_index, distance_func)

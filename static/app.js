@@ -112,6 +112,10 @@ function initMap2() {
 
 // 設置起點
 function setStartPoint(lat, lon) {
+    if (lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) {
+        console.warn('Invalid start point coordinates:', lat, lon);
+        return;
+    }
     document.getElementById('startLat').value = lat.toFixed(6);
     document.getElementById('startLon').value = lon.toFixed(6);
     
@@ -141,6 +145,10 @@ function setStartPoint(lat, lon) {
 
 // 設置終點
 function setEndPoint(lat, lon) {
+    if (lat === undefined || lon === undefined || isNaN(lat) || isNaN(lon)) {
+        console.warn('Invalid end point coordinates:', lat, lon);
+        return;
+    }
     document.getElementById('endLat').value = lat.toFixed(6);
     document.getElementById('endLon').value = lon.toFixed(6);
     
@@ -241,6 +249,9 @@ document.getElementById('calculateBtn').addEventListener('click', async function
     const randomState = document.getElementById('randomState').value ? parseInt(document.getElementById('randomState').value) : null;
     const nInit = parseInt(document.getElementById('nInit').value) || 10;
     
+    // 調試：顯示組內排序方法
+    console.log('[DEBUG] 組內排序方法 (innerOrderMethod):', innerOrderMethod);
+    
     // 全局優化參數
     const globalMethod = document.getElementById('globalMethod').value || 'ortools';
     
@@ -309,8 +320,58 @@ document.getElementById('calculateBtn').addEventListener('click', async function
             if (!response2.ok) {
                 throw new Error(data2.error || '取得 delivery sequence 失敗');
             }
+        } else if (optimizationMode === 'smart') {
+            // Smart 智能規劃模式：獨立處理
+            const smartMaxGroupSize = parseInt(document.getElementById('smartMaxGroupSize').value) || 15;
+            const smartClusterRadius = parseFloat(document.getElementById('smartClusterRadius').value) || 0.8;
+            const smartStrictGroupOrder = document.getElementById('smartStrictGroupOrder').checked;
+            const smartDirectionalConstraint = document.getElementById('smartDirectionalConstraint').checked;
+            const smartNextGroupLinkage = document.getElementById('smartNextGroupLinkage').value;
+            const smartLinkageWeight = parseFloat(document.getElementById('smartLinkageWeight').value) || 0.5;
+
+            console.log('[INFO] Smart 模式參數:', {
+                maxGroupSize: smartMaxGroupSize,
+                clusterRadius: smartClusterRadius,
+                strictGroupOrder: smartStrictGroupOrder,
+                directionalConstraint: smartDirectionalConstraint,
+                nextGroupLinkage: smartNextGroupLinkage,
+                linkageWeight: smartLinkageWeight
+            });
+
+            const [response1, response2] = await Promise.all([
+                // API 1: Smart 智能路徑規劃
+                fetch(`${API_BASE}/api/optimize-route-smart`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify({
+                        start: { lat: startLat, lon: startLon },
+                        order_group: orderGroup,
+                        maxGroupSize: smartMaxGroupSize,
+                        clusterRadius: smartClusterRadius,
+                        strictGroupOrder: smartStrictGroupOrder,
+                        directionalConstraint: smartDirectionalConstraint,
+                        nextGroupLinkage: smartNextGroupLinkage,
+                        linkageWeight: smartLinkageWeight
+                    })
+                }),
+                // API 2: Delivery Sequence 順序
+                fetch(`${API_BASE}/api/orders-sequence?order_group=${encodeURIComponent(orderGroup)}`)
+            ]);
+
+            data1 = await response1.json();
+            data2 = await response2.json();
+
+            if (!response1.ok) {
+                throw new Error(data1.error || '智能路徑規劃失敗');
+            }
+
+            if (!response2.ok) {
+                throw new Error(data2.error || '取得 delivery sequence 失敗');
+            }
         } else {
-            // 全局優化模式：調用新的全局 TSP API
+            // 全局優化模式：使用原有的全局 TSP API
             const [response1, response2] = await Promise.all([
                 // API 1: 全局 TSP 優化
                 fetch(`${API_BASE}/api/optimize-route-global`, {
@@ -332,43 +393,68 @@ document.getElementById('calculateBtn').addEventListener('click', async function
                 // API 2: Delivery Sequence 順序
                 fetch(`${API_BASE}/api/orders-sequence?order_group=${encodeURIComponent(orderGroup)}`)
             ]);
-            
+
             data1 = await response1.json();
             data2 = await response2.json();
-            
+
             if (!response1.ok) {
                 throw new Error(data1.error || '全局優化失敗');
             }
-            
+
             if (!response2.ok) {
                 throw new Error(data2.error || '取得 delivery sequence 失敗');
             }
         }
-        
-        // 存儲當前配置和結果
+
+        // 存儲當前配置和結果（根據模式只保存相關參數）
         currentConfig = {
             startLat,
             startLon,
             orderGroup,
             optimizationMode,
-            maxGroupSize,
-            clusterRadius,
-            minSamples,
-            metric,
-            groupOrderMethod,
-            innerOrderMethod,
-            globalMethod,
-            randomState,
-            nInit,
-            verification,
-            groupPenalty,
-            innerPenalty,
-            checkHighways,
-            sequenceMode,
-            endPointMode,
-            endLat,
-            endLon
+            sequenceMode
         };
+
+        // 根據優化模式添加相應的參數
+        if (optimizationMode === 'clustering') {
+            // 分組模式參數
+            currentConfig.maxGroupSize = maxGroupSize;
+            currentConfig.clusterRadius = clusterRadius;
+            currentConfig.minSamples = minSamples;
+            currentConfig.metric = metric;
+            currentConfig.groupOrderMethod = groupOrderMethod;
+            currentConfig.innerOrderMethod = innerOrderMethod;
+            currentConfig.randomState = randomState;
+            currentConfig.nInit = nInit;
+            currentConfig.verification = verification;
+            currentConfig.groupPenalty = groupPenalty;
+            currentConfig.innerPenalty = innerPenalty;
+            currentConfig.checkHighways = checkHighways;
+            // 終點相關參數
+            currentConfig.endPointMode = endPointMode;
+            currentConfig.endLat = endLat;
+            currentConfig.endLon = endLon;
+        } else if (optimizationMode === 'smart') {
+            // Smart 模式：開放式路徑參數
+            currentConfig.maxGroupSize = parseInt(document.getElementById('smartMaxGroupSize').value) || 15;
+            currentConfig.clusterRadius = parseFloat(document.getElementById('smartClusterRadius').value) || 0.8;
+            currentConfig.strictGroupOrder = document.getElementById('smartStrictGroupOrder').checked;
+            currentConfig.directionalConstraint = document.getElementById('smartDirectionalConstraint').checked;
+            currentConfig.nextGroupLinkage = document.getElementById('smartNextGroupLinkage').value;
+            currentConfig.linkageWeight = parseFloat(document.getElementById('smartLinkageWeight').value) || 0.5;
+            // Smart 不使用終點參數（開放式路徑）
+        } else if (optimizationMode === 'global') {
+            // 全局優化參數
+            currentConfig.globalMethod = globalMethod;
+            currentConfig.verification = verification;
+            currentConfig.innerPenalty = innerPenalty;
+            currentConfig.checkHighways = checkHighways;
+            // 終點相關參數
+            currentConfig.endPointMode = endPointMode;
+            currentConfig.endLat = endLat;
+            currentConfig.endLon = endLon;
+        }
+
         currentResults = data1;
         
         // 顯示結果
@@ -486,6 +572,11 @@ function drawRoute(data, sequenceMode) {
     // 步驟 1: 檢測相同位置的訂單
     const locationGroups = {};
     data.orders.forEach((order, index) => {
+        // 檢查座標是否有效
+        if (!order.lat || !order.lon || isNaN(order.lat) || isNaN(order.lon)) {
+            console.warn(`訂單 ${order.tracking_number} 缺少有效座標:`, order);
+            return;
+        }
         const key = `${order.lat.toFixed(6)},${order.lon.toFixed(6)}`;
         if (!locationGroups[key]) {
             locationGroups[key] = [];
@@ -495,6 +586,12 @@ function drawRoute(data, sequenceMode) {
     
     // 步驟 2: 為每個訂單添加標記（相同位置自動偏移）
     data.orders.forEach((order, index) => {
+        // 檢查座標是否有效
+        if (!order.lat || !order.lon || isNaN(order.lat) || isNaN(order.lon)) {
+            console.warn(`訂單 ${order.tracking_number} 缺少有效座標，跳過顯示:`, order);
+            return;
+        }
+
         // 跳過終點標記（單獨處理）
         if (order.tracking_number === 'ENDPOINT') {
             // 顯示終點標記（紅色星形）
@@ -506,15 +603,15 @@ function drawRoute(data, sequenceMode) {
                 popupAnchor: [1, -34],
                 shadowSize: [41, 41]
             });
-            
+
             const endMarkerTemp = L.marker([order.lat, order.lon], { icon: redIcon })
                 .addTo(map)
                 .bindPopup('<div class="popup-title">終點 (手動設置)</div>');
-            
+
             orderMarkers.push(endMarkerTemp);
             return;
         }
-        
+
         const key = `${order.lat.toFixed(6)},${order.lon.toFixed(6)}`;
         const ordersAtLocation = locationGroups[key];
         const isMultiple = ordersAtLocation.length > 1;
@@ -536,7 +633,7 @@ function drawRoute(data, sequenceMode) {
         // 如果同一位置有多個訂單，添加小量偏移（圓形排列）
         let lat = order.lat;
         let lon = order.lon;
-        
+
         if (isMultiple) {
             const positionIndex = ordersAtLocation.findIndex(item => item.index === index);
             const angle = (positionIndex / ordersAtLocation.length) * 2 * Math.PI;
@@ -544,7 +641,13 @@ function drawRoute(data, sequenceMode) {
             lat += Math.cos(angle) * offset;
             lon += Math.sin(angle) * offset;
         }
-        
+
+        // 再次檢查座標（防止計算後出現 NaN）
+        if (!lat || !lon || isNaN(lat) || isNaN(lon)) {
+            console.warn(`訂單 ${order.tracking_number} 座標無效，跳過標記創建:`, {lat, lon});
+            return;
+        }
+
         // 創建帶編號的自訂 div icon（如果多個訂單添加徽章）
         const badge = isMultiple ? '<span class="multi-badge">●</span>' : '';
         const numberIcon = L.divIcon({
@@ -554,22 +657,22 @@ function drawRoute(data, sequenceMode) {
             iconAnchor: [20, 20],
             popupAnchor: [0, -20]
         });
-        
+
         // 準備 Popup 內容
         let popupContent = `<div class="popup-title">${displaySeq}</div>`;
         popupContent += `<div class="popup-tracking">${order.tracking_number}</div>`;
-        
+
         // 如果同一位置有多個訂單，顯示所有訂單
         if (isMultiple) {
             popupContent += `<div class="popup-multiple">📍 此位置共 ${ordersAtLocation.length} 個訂單：</div>`;
             ordersAtLocation.forEach(item => {
-                const seq = sequenceMode === 'continuous' 
-                    ? item.order.sequence 
+                const seq = sequenceMode === 'continuous'
+                    ? item.order.sequence
                     : (item.order.group_sequence || `#${item.index + 1}`);
                 popupContent += `<div class="popup-item">• ${seq}: ${item.order.tracking_number}</div>`;
             });
         }
-        
+
         const marker = L.marker([lat, lon], { icon: numberIcon })
             .addTo(map)
             .bindPopup(popupContent);
@@ -644,11 +747,17 @@ function drawSequenceMap(data) {
     
     // 在地圖2上顯示訂單標記
     data.orders.forEach((order, index) => {
+        // 檢查座標是否有效
+        if (!order.lat || !order.lon || isNaN(order.lat) || isNaN(order.lon)) {
+            console.warn(`地圖2：訂單 ${order.tracking_number} 座標無效，跳過:`, order);
+            return;
+        }
+
         const displaySeq = order.delivery_sequence_original || order.delivery_sequence;
-        
+
         // 統一藍色
         const bgColor = '#3498db';
-        
+
         // 創建帶編號的自訂 div icon
         const numberIcon = L.divIcon({
             html: `<div class="number-marker" style="background: ${bgColor};">${displaySeq}</div>`,
@@ -657,21 +766,24 @@ function drawSequenceMap(data) {
             iconAnchor: [20, 20],
             popupAnchor: [0, -20]
         });
-        
+
         // 準備 Popup 內容
         let popupContent = `<div class="popup-title">序號 ${displaySeq}</div>`;
         popupContent += `<div class="popup-tracking">${order.tracking_number}</div>`;
-        
+
         const marker = L.marker([order.lat, order.lon], { icon: numberIcon })
             .addTo(map2)
             .bindPopup(popupContent);
-        
+
         orderMarkers2.push(marker);
     });
     
-    // 調整視角包含所有訂單點
-    const bounds = L.latLngBounds(data.orders.map(o => [o.lat, o.lon]));
-    map2.fitBounds(bounds, { padding: [50, 50] });
+    // 調整視角包含所有訂單點（過濾掉無效座標）
+    const validOrders = data.orders.filter(o => o.lat && o.lon && !isNaN(o.lat) && !isNaN(o.lon));
+    if (validOrders.length > 0) {
+        const bounds = L.latLngBounds(validOrders.map(o => [o.lat, o.lon]));
+        map2.fitBounds(bounds, { padding: [50, 50] });
+    }
 }
 
 // 清除訂單標記
@@ -856,24 +968,38 @@ let currentResults = null;
 // 生成分享連結
 function generateShareLink() {
     if (!currentConfig) return '';
-    
-    const params = {
-        startLat: currentConfig.startLat,
-        startLon: currentConfig.startLon,
-        orderGroup: currentConfig.orderGroup,
-        maxGroupSize: currentConfig.maxGroupSize,
-        clusterRadius: currentConfig.clusterRadius,
-        minSamples: currentConfig.minSamples,
-        metric: currentConfig.metric,
-        randomState: currentConfig.randomState,
-        nInit: currentConfig.nInit,
-            verification: currentConfig.verification,
-            groupPenalty: currentConfig.groupPenalty,
-            innerPenalty: currentConfig.innerPenalty,
-            checkHighways: currentConfig.checkHighways,
-            sequenceMode: currentConfig.sequenceMode
-    };
-    
+
+    // 只包含非 undefined 的參數（根據優化模式不同，參數會不同）
+    const params = {};
+
+    // 所有模式都需要的基本參數
+    if (currentConfig.startLat !== undefined) params.startLat = currentConfig.startLat;
+    if (currentConfig.startLon !== undefined) params.startLon = currentConfig.startLon;
+    if (currentConfig.orderGroup !== undefined) params.orderGroup = currentConfig.orderGroup;
+    if (currentConfig.optimizationMode !== undefined) params.optimizationMode = currentConfig.optimizationMode;
+    if (currentConfig.sequenceMode !== undefined) params.sequenceMode = currentConfig.sequenceMode;
+    if (currentConfig.endPointMode !== undefined) params.endPointMode = currentConfig.endPointMode;
+    if (currentConfig.endLat !== undefined) params.endLat = currentConfig.endLat;
+    if (currentConfig.endLon !== undefined) params.endLon = currentConfig.endLon;
+
+    // 模式特定的參數（只有在 currentConfig 中存在時才添加）
+    if (currentConfig.maxGroupSize !== undefined) params.maxGroupSize = currentConfig.maxGroupSize;
+    if (currentConfig.clusterRadius !== undefined) params.clusterRadius = currentConfig.clusterRadius;
+    if (currentConfig.directionalConstraint !== undefined) params.directionalConstraint = currentConfig.directionalConstraint;
+    if (currentConfig.nextGroupLinkage !== undefined) params.nextGroupLinkage = currentConfig.nextGroupLinkage;
+    if (currentConfig.linkageWeight !== undefined) params.linkageWeight = currentConfig.linkageWeight;
+    if (currentConfig.minSamples !== undefined) params.minSamples = currentConfig.minSamples;
+    if (currentConfig.metric !== undefined) params.metric = currentConfig.metric;
+    if (currentConfig.groupOrderMethod !== undefined) params.groupOrderMethod = currentConfig.groupOrderMethod;
+    if (currentConfig.innerOrderMethod !== undefined) params.innerOrderMethod = currentConfig.innerOrderMethod;
+    if (currentConfig.randomState !== undefined) params.randomState = currentConfig.randomState;
+    if (currentConfig.nInit !== undefined) params.nInit = currentConfig.nInit;
+    if (currentConfig.verification !== undefined) params.verification = currentConfig.verification;
+    if (currentConfig.groupPenalty !== undefined) params.groupPenalty = currentConfig.groupPenalty;
+    if (currentConfig.innerPenalty !== undefined) params.innerPenalty = currentConfig.innerPenalty;
+    if (currentConfig.checkHighways !== undefined) params.checkHighways = currentConfig.checkHighways;
+    if (currentConfig.globalMethod !== undefined) params.globalMethod = currentConfig.globalMethod;
+
     const encoded = btoa(JSON.stringify(params));
     return `${window.location.origin}${window.location.pathname}?config=${encoded}`;
 }
@@ -886,52 +1012,109 @@ function loadConfigFromUrl() {
     if (configParam) {
         try {
             const config = JSON.parse(atob(configParam));
-            
-            // 設置表單值
+
+            // 設置基本參數
             if (config.startLat && config.startLon) {
                 setStartPoint(config.startLat, config.startLon);
             }
             if (config.orderGroup) {
                 document.getElementById('orderGroupInput').value = config.orderGroup;
             }
-            if (config.maxGroupSize) {
-                document.getElementById('maxGroupSize').value = config.maxGroupSize;
-            }
-            if (config.clusterRadius) {
-                document.getElementById('clusterRadius').value = config.clusterRadius;
-            }
-            if (config.minSamples) {
-                document.getElementById('minSamples').value = config.minSamples;
-            }
-            if (config.metric) {
-                document.getElementById('metric').value = config.metric;
-            }
-            if (config.randomState !== undefined && config.randomState !== null) {
-                document.getElementById('randomState').value = config.randomState;
-            }
-            if (config.nInit) {
-                document.getElementById('nInit').value = config.nInit;
-            }
-            if (config.verification) {
-                document.getElementById('verification').value = config.verification;
-                // 觸發變化事件以顯示/隱藏懲罰係數
-                document.getElementById('verification').dispatchEvent(new Event('change'));
-            }
-            if (config.groupPenalty) {
-                document.getElementById('groupPenalty').value = config.groupPenalty;
-                document.getElementById('groupPenalty').dispatchEvent(new Event('input'));
-            }
-            if (config.innerPenalty) {
-                document.getElementById('innerPenalty').value = config.innerPenalty;
-                document.getElementById('innerPenalty').dispatchEvent(new Event('input'));
-            }
-            if (config.checkHighways !== undefined) {
-                document.getElementById('checkHighways').checked = config.checkHighways;
-            }
             if (config.sequenceMode) {
                 document.getElementById('sequenceMode').value = config.sequenceMode;
             }
-            
+            if (config.endPointMode) {
+                document.getElementById('endPointMode').value = config.endPointMode;
+            }
+            if (config.endLat && config.endLon) {
+                setEndPoint(config.endLat, config.endLon);
+            }
+
+            // 設置優化模式並觸發 UI 更新
+            if (config.optimizationMode) {
+                document.getElementById('optimizationMode').value = config.optimizationMode;
+                document.getElementById('optimizationMode').dispatchEvent(new Event('change'));
+            }
+
+            // 根據優化模式設置相應參數
+            if (config.optimizationMode === 'clustering') {
+                if (config.maxGroupSize) {
+                    document.getElementById('maxGroupSize').value = config.maxGroupSize;
+                }
+                if (config.clusterRadius) {
+                    document.getElementById('clusterRadius').value = config.clusterRadius;
+                }
+                if (config.minSamples) {
+                    document.getElementById('minSamples').value = config.minSamples;
+                }
+                if (config.metric) {
+                    document.getElementById('metric').value = config.metric;
+                }
+                if (config.groupOrderMethod) {
+                    document.getElementById('groupOrderMethod').value = config.groupOrderMethod;
+                }
+                if (config.innerOrderMethod) {
+                    document.getElementById('innerOrderMethod').value = config.innerOrderMethod;
+                }
+                if (config.randomState !== undefined && config.randomState !== null) {
+                    document.getElementById('randomState').value = config.randomState;
+                }
+                if (config.nInit) {
+                    document.getElementById('nInit').value = config.nInit;
+                }
+                if (config.verification) {
+                    document.getElementById('verification').value = config.verification;
+                    document.getElementById('verification').dispatchEvent(new Event('change'));
+                }
+                if (config.groupPenalty) {
+                    document.getElementById('groupPenalty').value = config.groupPenalty;
+                    document.getElementById('groupPenalty').dispatchEvent(new Event('input'));
+                }
+                if (config.innerPenalty) {
+                    document.getElementById('innerPenalty').value = config.innerPenalty;
+                    document.getElementById('innerPenalty').dispatchEvent(new Event('input'));
+                }
+                if (config.checkHighways !== undefined) {
+                    document.getElementById('checkHighways').checked = config.checkHighways;
+                }
+            } else if (config.optimizationMode === 'smart') {
+                if (config.maxGroupSize) {
+                    document.getElementById('smartMaxGroupSize').value = config.maxGroupSize;
+                }
+                if (config.clusterRadius) {
+                    document.getElementById('smartClusterRadius').value = config.clusterRadius;
+                }
+                if (config.strictGroupOrder !== undefined) {
+                    document.getElementById('smartStrictGroupOrder').checked = config.strictGroupOrder;
+                }
+                if (config.directionalConstraint !== undefined) {
+                    document.getElementById('smartDirectionalConstraint').checked = config.directionalConstraint;
+                }
+                if (config.nextGroupLinkage) {
+                    document.getElementById('smartNextGroupLinkage').value = config.nextGroupLinkage;
+                    // 觸發change事件以顯示/隱藏權重輸入框
+                    document.getElementById('smartNextGroupLinkage').dispatchEvent(new Event('change'));
+                }
+                if (config.linkageWeight !== undefined) {
+                    document.getElementById('smartLinkageWeight').value = config.linkageWeight;
+                }
+            } else if (config.optimizationMode === 'global') {
+                if (config.globalMethod) {
+                    document.getElementById('globalMethod').value = config.globalMethod;
+                }
+                if (config.verification) {
+                    document.getElementById('verification').value = config.verification;
+                    document.getElementById('verification').dispatchEvent(new Event('change'));
+                }
+                if (config.innerPenalty) {
+                    document.getElementById('innerPenalty').value = config.innerPenalty;
+                    document.getElementById('innerPenalty').dispatchEvent(new Event('input'));
+                }
+                if (config.checkHighways !== undefined) {
+                    document.getElementById('checkHighways').checked = config.checkHighways;
+                }
+            }
+
             updateCalculateButton();
             
             // 顯示提示
@@ -948,6 +1131,8 @@ function loadConfigFromUrl() {
 
 // 獲取當前所有設定
 function getAllSettings() {
+    const optimizationMode = document.getElementById('optimizationMode').value;
+
     const settings = {
         // 起點
         startLat: document.getElementById('startLat').value,
@@ -965,18 +1150,8 @@ function getAllSettings() {
         sequenceMode: document.getElementById('sequenceMode').value,
 
         // 優化模式
-        optimizationMode: document.getElementById('optimizationMode').value,
+        optimizationMode: optimizationMode,
         globalMethod: document.getElementById('globalMethod').value,
-
-        // 分組參數
-        maxGroupSize: document.getElementById('maxGroupSize').value,
-        clusterRadius: document.getElementById('clusterRadius').value,
-        minSamples: document.getElementById('minSamples').value,
-        metric: document.getElementById('metric').value,
-        groupOrderMethod: document.getElementById('groupOrderMethod').value,
-        innerOrderMethod: document.getElementById('innerOrderMethod').value,
-        randomState: document.getElementById('randomState').value,
-        nInit: document.getElementById('nInit').value,
 
         // 障礙檢測
         verification: document.getElementById('verification').value,
@@ -987,6 +1162,27 @@ function getAllSettings() {
         // 路線預加載
         preloadRoutes: document.getElementById('preloadRoutes').checked
     };
+
+    // 根據優化模式添加對應參數
+    if (optimizationMode === 'smart') {
+        // Smart 模式參數
+        settings.smartMaxGroupSize = document.getElementById('smartMaxGroupSize').value;
+        settings.smartClusterRadius = document.getElementById('smartClusterRadius').value;
+        settings.smartStrictGroupOrder = document.getElementById('smartStrictGroupOrder').checked;
+        settings.smartDirectionalConstraint = document.getElementById('smartDirectionalConstraint').checked;
+        settings.smartNextGroupLinkage = document.getElementById('smartNextGroupLinkage').value;
+        settings.smartLinkageWeight = document.getElementById('smartLinkageWeight').value;
+    } else if (optimizationMode === 'clustering') {
+        // Clustering 模式參數
+        settings.maxGroupSize = document.getElementById('maxGroupSize').value;
+        settings.clusterRadius = document.getElementById('clusterRadius').value;
+        settings.minSamples = document.getElementById('minSamples').value;
+        settings.metric = document.getElementById('metric').value;
+        settings.groupOrderMethod = document.getElementById('groupOrderMethod').value;
+        settings.innerOrderMethod = document.getElementById('innerOrderMethod').value;
+        settings.randomState = document.getElementById('randomState').value;
+        settings.nInit = document.getElementById('nInit').value;
+    }
 
     return settings;
 }
@@ -1063,7 +1259,7 @@ function applySettings(settings) {
         document.getElementById('globalMethod').value = settings.globalMethod;
     }
 
-    // 分組參數
+    // 分組參數 - Clustering 模式
     if (settings.maxGroupSize) {
         document.getElementById('maxGroupSize').value = settings.maxGroupSize;
     }
@@ -1087,6 +1283,27 @@ function applySettings(settings) {
     }
     if (settings.nInit) {
         document.getElementById('nInit').value = settings.nInit;
+    }
+
+    // Smart 模式參數
+    if (settings.smartMaxGroupSize) {
+        document.getElementById('smartMaxGroupSize').value = settings.smartMaxGroupSize;
+    }
+    if (settings.smartClusterRadius) {
+        document.getElementById('smartClusterRadius').value = settings.smartClusterRadius;
+    }
+    if (settings.smartStrictGroupOrder !== undefined) {
+        document.getElementById('smartStrictGroupOrder').checked = settings.smartStrictGroupOrder;
+    }
+    if (settings.smartDirectionalConstraint !== undefined) {
+        document.getElementById('smartDirectionalConstraint').checked = settings.smartDirectionalConstraint;
+    }
+    if (settings.smartNextGroupLinkage) {
+        document.getElementById('smartNextGroupLinkage').value = settings.smartNextGroupLinkage;
+        document.getElementById('smartNextGroupLinkage').dispatchEvent(new Event('change'));
+    }
+    if (settings.smartLinkageWeight) {
+        document.getElementById('smartLinkageWeight').value = settings.smartLinkageWeight;
     }
 
     // 障礙檢測
@@ -1315,10 +1532,16 @@ function showRouteSegment(index) {
         shadowSize: [61, 61]
     });
     
-    const displaySeq = currentConfig.sequenceMode === 'continuous' 
-        ? toOrder.sequence 
+    // 檢查目標訂單座標是否有效
+    if (!toOrder.lat || !toOrder.lon || isNaN(toOrder.lat) || isNaN(toOrder.lon)) {
+        console.warn('目標訂單座標無效，無法高亮:', toOrder);
+        return;
+    }
+
+    const displaySeq = currentConfig.sequenceMode === 'continuous'
+        ? toOrder.sequence
         : toOrder.group_sequence;
-    
+
     const toHighlight = L.marker([toOrder.lat, toOrder.lon], { icon: yellowIcon })
         .addTo(map)
         .bindPopup(`<div class="popup-title">${displaySeq}</div><div class="popup-tracking">${toOrder.tracking_number}</div>`)
@@ -1864,32 +2087,56 @@ document.addEventListener('DOMContentLoaded', function() {
     initMap();
     initMap2();
     loadConfigFromUrl();
-    
+
+    // 監聽組間銜接選項變化，顯示/隱藏權重輸入框
+    document.getElementById('smartNextGroupLinkage').addEventListener('change', function() {
+        const weightGroup = document.getElementById('smartLinkageWeightGroup');
+        if (this.value === 'weighted') {
+            weightGroup.style.display = 'block';
+        } else {
+            weightGroup.style.display = 'none';
+        }
+    });
+
     // 監聽優化模式切換
     document.getElementById('optimizationMode').addEventListener('change', function() {
         const clusteringSection = document.getElementById('clusteringSection');
         const globalMethodSection = document.getElementById('globalMethodSection');
+        const smartSection = document.getElementById('smartSection');
 
         if (this.value === 'clustering') {
+            // 分組模式
             clusteringSection.style.display = 'block';
             globalMethodSection.style.display = 'none';
-        } else {
+            smartSection.style.display = 'none';
+        } else if (this.value === 'global') {
+            // 全局優化模式
             clusteringSection.style.display = 'none';
             globalMethodSection.style.display = 'block';
+            smartSection.style.display = 'none';
+        } else if (this.value === 'smart') {
+            // Smart 智能規劃模式
+            clusteringSection.style.display = 'none';
+            globalMethodSection.style.display = 'none';
+            smartSection.style.display = 'block';
         }
     });
 
     // 設置初始狀態（預設為分組模式）
-    const clusteringSection = document.getElementById('clusteringSection');
-    const globalMethodSection = document.getElementById('globalMethodSection');
     const defaultMode = document.getElementById('optimizationMode').value;
 
     if (defaultMode === 'clustering') {
         clusteringSection.style.display = 'block';
         globalMethodSection.style.display = 'none';
-    } else {
+        smartSection.style.display = 'none';
+    } else if (defaultMode === 'global') {
         clusteringSection.style.display = 'none';
         globalMethodSection.style.display = 'block';
+        smartSection.style.display = 'none';
+    } else if (defaultMode === 'smart') {
+        clusteringSection.style.display = 'none';
+        globalMethodSection.style.display = 'none';
+        smartSection.style.display = 'block';
     }
     
     // 監聽終點模式切換
@@ -2194,15 +2441,24 @@ function visualizeDBSCANClusters(data) {
                 iconAnchor: [12, 12]
             });
             
+            // 檢查中心點座標是否有效
+            if (!center.lat || !center.lon || isNaN(center.lat) || isNaN(center.lon)) {
+                console.warn(`中心點座標無效，跳過:`, center);
+                return;
+            }
+
             const centerMarker = L.marker([center.lat, center.lon], {
                 icon: centerIcon,
                 zIndexOffset: 1000
             }).addTo(map);
-            
+
+            const centerLat = (center.lat && !isNaN(center.lat)) ? center.lat.toFixed(5) : 'N/A';
+            const centerLon = (center.lon && !isNaN(center.lon)) ? center.lon.toFixed(5) : 'N/A';
+
             centerMarker.bindPopup(`
                 <div class="popup-title">🎯 群組 ${label} 中心點</div>
                 <div style="font-size: 12px; color: #555;">
-                    座標: (${center.lat.toFixed(5)}, ${center.lon.toFixed(5)})<br>
+                    座標: (${centerLat}, ${centerLon})<br>
                     訂單數: ${center.count}
                 </div>
             `);
@@ -2316,15 +2572,24 @@ function visualizeKMeansClusters(data) {
                 iconAnchor: [14, 14]
             });
             
+            // 檢查中心點座標是否有效
+            if (!center.lat || !center.lon || isNaN(center.lat) || isNaN(center.lon)) {
+                console.warn(`中心點座標無效，跳過:`, center);
+                return;
+            }
+
             const centerMarker = L.marker([center.lat, center.lon], {
                 icon: centerIcon,
                 zIndexOffset: 1000
             }).addTo(map);
-            
+
+            const centerLat = (center.lat && !isNaN(center.lat)) ? center.lat.toFixed(5) : 'N/A';
+            const centerLon = (center.lon && !isNaN(center.lon)) ? center.lon.toFixed(5) : 'N/A';
+
             centerMarker.bindPopup(`
                 <div class="popup-title">🎯 群組 ${groupName} 中心點</div>
                 <div style="font-size: 12px; color: #555;">
-                    座標: (${center.lat.toFixed(5)}, ${center.lon.toFixed(5)})<br>
+                    座標: (${centerLat}, ${centerLon})<br>
                     訂單數: ${orders.length}
                 </div>
             `);
@@ -2374,15 +2639,24 @@ function visualizeGroupOrdering(data) {
             iconAnchor: [20, 20]
         });
         
+        // 檢查中心點座標是否有效
+        if (!center.lat || !center.lon || isNaN(center.lat) || isNaN(center.lon)) {
+            console.warn(`群組 ${groupInfo.group} 中心點座標無效，跳過:`, center);
+            return;
+        }
+
         const marker = L.marker([center.lat, center.lon], {
             icon: centerIcon,
             zIndexOffset: 1000
         }).addTo(map);
-        
+
+        const centerLat = (center.lat && !isNaN(center.lat)) ? center.lat.toFixed(5) : 'N/A';
+        const centerLon = (center.lon && !isNaN(center.lon)) ? center.lon.toFixed(5) : 'N/A';
+
         marker.bindPopup(`
             <div class="popup-title">群組 ${groupInfo.group} (順序 #${idx + 1})</div>
             <div style="font-size: 12px; color: #555;">
-                座標: (${center.lat.toFixed(5)}, ${center.lon.toFixed(5)})<br>
+                座標: (${centerLat}, ${centerLon})<br>
                 訂單數: ${groupInfo.size}<br>
                 群組ID: ${groupInfo.cluster_id}
             </div>

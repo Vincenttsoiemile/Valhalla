@@ -1,0 +1,13 @@
+# 核心算法依赖包
+# 使用命令安装: pip install -r core_algorithms_requirements.txt
+
+# 必需的包
+numpy>=1.20.0
+scikit-learn>=1.0.0
+scipy>=1.7.0
+
+# 可选的包（用于高级 TSP 求解）
+ortools>=9.0.0
+python-tsp>=0.3.0
+
+

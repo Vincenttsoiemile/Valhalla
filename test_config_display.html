@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>測試配置顯示</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .config-section {
+            background: #f5f5f5;
+            padding: 20px;
+            margin: 20px 0;
+            border-radius: 8px;
+        }
+        h2 {
+            color: #333;
+        }
+        pre {
+            background: #fff;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+        .mode {
+            font-weight: bold;
+            color: #2196F3;
+        }
+        .expected {
+            color: #4CAF50;
+        }
+        .unexpected {
+            color: #f44336;
+        }
+    </style>
+</head>
+<body>
+    <h1>配置參數測試</h1>
+
+    <div class="config-section">
+        <h2>測試說明</h2>
+        <p>這個頁面用於驗證不同優化模式下 <code>currentConfig</code> 只包含相關參數。</p>
+    </div>
+
+    <div class="config-section">
+        <h2>📦 分組模式 (Clustering Mode)</h2>
+        <p class="mode">應包含的參數：</p>
+        <ul class="expected">
+            <li>startLat, startLon, orderGroup, optimizationMode, sequenceMode, endPointMode, endLat, endLon</li>
+            <li>maxGroupSize, clusterRadius, minSamples, metric</li>
+            <li>groupOrderMethod, innerOrderMethod, randomState, nInit</li>
+            <li>verification, groupPenalty, innerPenalty, checkHighways</li>
+        </ul>
+        <p class="mode">不應包含：</p>
+        <ul class="unexpected">
+            <li>globalMethod</li>
+        </ul>
+    </div>
+
+    <div class="config-section">
+        <h2>🧠 智能規劃模式 (Smart Mode)</h2>
+        <p class="mode">應包含的參數：</p>
+        <ul class="expected">
+            <li>startLat, startLon, orderGroup, optimizationMode, sequenceMode</li>
+            <li><strong>maxGroupSize, clusterRadius</strong> (僅這兩個優化參數)</li>
+        </ul>
+        <p class="mode">不應包含：</p>
+        <ul class="unexpected">
+            <li><strong>endPointMode, endLat, endLon</strong> (Smart 是開放式路徑)</li>
+            <li>minSamples, metric, groupOrderMethod, innerOrderMethod</li>
+            <li>randomState, nInit, verification, groupPenalty, innerPenalty</li>
+            <li>checkHighways, globalMethod</li>
+        </ul>
+        <p style="background: #fff3cd; padding: 10px; border-radius: 4px; margin-top: 10px;">
+            💡 <strong>重要：</strong>Smart 模式採用開放式路徑設計，不返回起點，因此不需要終點相關參數。
+        </p>
+    </div>
+
+    <div class="config-section">
+        <h2>🌐 全局優化模式 (Global Mode)</h2>
+        <p class="mode">應包含的參數：</p>
+        <ul class="expected">
+            <li>startLat, startLon, orderGroup, optimizationMode, sequenceMode, endPointMode, endLat, endLon</li>
+            <li>globalMethod, verification, innerPenalty, checkHighways</li>
+        </ul>
+        <p class="mode">不應包含：</p>
+        <ul class="unexpected">
+            <li>maxGroupSize, clusterRadius, minSamples, metric</li>
+            <li>groupOrderMethod, innerOrderMethod, randomState, nInit, groupPenalty</li>
+        </ul>
+    </div>
+
+    <div class="config-section">
+        <h2>✅ 驗證方法</h2>
+        <ol>
+            <li>在主應用中選擇 <strong>智能規劃模式</strong></li>
+            <li>設置起始點和 order_group</li>
+            <li>執行優化</li>
+            <li>在瀏覽器開發者工具的 Console 中執行：
+                <pre>console.log(JSON.stringify(currentConfig, null, 2))</pre>
+            </li>
+            <li>檢查輸出是否只包含上述「應包含的參數」</li>
+        </ol>
+    </div>
+
+    <div class="config-section">
+        <h2>📋 預期的 Smart 模式配置範例</h2>
+        <pre>{
+  "startLat": "43.681963",
+  "startLon": "-79.711304",
+  "orderGroup": "Group202511131925010114",
+  "optimizationMode": "smart",
+  "sequenceMode": "grouped",
+  "maxGroupSize": 15,
+  "clusterRadius": 0.8
+}</pre>
+        <p style="color: #4CAF50;">✅ 只有 7 個參數（5 個基本 + 2 個 Smart 專用）</p>
+        <p style="color: #666; font-size: 0.9em; margin-top: 10px;">
+            ❌ 不包含 endPointMode, endLat, endLon（Smart 模式是開放式路徑）
+        </p>
+    </div>
+</body>
+</html>

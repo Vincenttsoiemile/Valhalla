@@ -41,6 +41,11 @@ def index():
     response.headers['Expires'] = '0'
     return response
 
+@app.route('/favicon.ico')
+def favicon():
+    """處理 favicon 請求，避免 404 錯誤"""
+    return '', 204  # 返回 No Content
+
 @app.route('/static/<path:filename>')
 def serve_static(filename):
     """服務靜態文件（禁用緩存）"""
@@ -1730,6 +1735,158 @@ def optimize_route_global():
         import traceback
         traceback.print_exc()
         return jsonify({'error': f'全局優化錯誤: {str(e)}'}), 500
+
+
+@app.route('/api/optimize-route-smart', methods=['POST'])
+def optimize_route_smart():
+    """
+    智能路徑規劃 API - 使用全新的 Smart Route Planner
+
+    這是完全獨立的新演算法，包含三個階段：
+    Stage 1: 智能 K-means 分組（動態調整）
+    Stage 2: 組別排序與重新命名（開放式 2-opt）
+    Stage 3: 組內路徑優化（開放式 2-opt）
+    """
+    data = request.json
+
+    # 驗證輸入
+    if not data.get('start'):
+        return jsonify({'error': '起點必填'}), 400
+    if not data.get('order_group'):
+        return jsonify({'error': 'order_group 必填'}), 400
+
+    start = data['start']
+    order_group = data['order_group']
+    max_group_size = data.get('maxGroupSize', 15)
+    cluster_radius = data.get('clusterRadius', 0.8)
+    strict_group_order = data.get('strictGroupOrder', False)
+    directional_constraint = data.get('directionalConstraint', False)
+    next_group_linkage = data.get('nextGroupLinkage', 'none')
+    linkage_weight = data.get('linkageWeight', 0.5)
+
+    print(f"[DEBUG] 智能路徑規劃請求: order_group={order_group}, maxGroupSize={max_group_size}, clusterRadius={cluster_radius}, strictGroupOrder={strict_group_order}, directionalConstraint={directional_constraint}, nextGroupLinkage={next_group_linkage}, linkageWeight={linkage_weight}")
+
+    try:
+        # 從資料庫取得訂單座標
+        conn = get_db_connection()
+        cursor = conn.cursor(pymysql.cursors.DictCursor)
+
+        query = """
+            SELECT tracking_number, latitude, longitude
+            FROM ordersjb
+            WHERE order_group = %s
+            AND latitude IS NOT NULL
+            AND longitude IS NOT NULL
+            ORDER BY tracking_number
+        """
+
+        cursor.execute(query, (order_group,))
+        orders = cursor.fetchall()
+
+        cursor.close()
+        conn.close()
+
+        if not orders:
+            return jsonify({'error': f'找不到 order_group: {order_group} 的訂單'}), 404
+
+        print(f"[DEBUG] 找到 {len(orders)} 個訂單")
+
+        # 驗證並過濾有效的經緯度
+        valid_orders = []
+        for order in orders:
+            try:
+                lat_raw = float(order['latitude'])
+                lon_raw = float(order['longitude'])
+
+                # 轉換格式
+                lat = lat_raw / 10000000000.0 if abs(lat_raw) > 1000 else lat_raw
+                lon = lon_raw / 10000000000.0 if abs(lon_raw) > 1000 else lon_raw
+
+                # 驗證經緯度範圍
+                if -90 <= lat <= 90 and -180 <= lon <= 180:
+                    if abs(lat) > 0.001 and abs(lon) > 0.001:
+                        valid_orders.append({
+                            'tracking_number': order['tracking_number'],
+                            'lat': lat,
+                            'lon': lon
+                        })
+            except (ValueError, TypeError) as e:
+                print(f"[WARN] 跳過無效座標: {order.get('tracking_number')} - {e}")
+                continue
+
+        if not valid_orders:
+            return jsonify({'error': '沒有有效的訂單座標'}), 404
+
+        print(f"[DEBUG] 有效訂單: {len(valid_orders)} 個")
+
+        # 使用新的智能路徑規劃演算法
+        from tsp_solver import solve_tsp_smart
+
+        print(f"[INFO] 使用 Smart Route Planner 優化 {len(valid_orders)} 個訂單...")
+
+        result = solve_tsp_smart(
+            orders=valid_orders,
+            start_point=start,
+            max_group_size=max_group_size,
+            initial_cluster_radius=cluster_radius,
+            min_cluster_radius=0.3,
+            strict_group_order=strict_group_order,
+            directional_constraint=directional_constraint,
+            next_group_linkage=next_group_linkage,
+            linkage_weight=linkage_weight
+        )
+
+        # 根據結果重新組織訂單
+        result_orders = []
+        global_sequence = 1  # 全局連續序號（用於連號模式）
+
+        for group_label in sorted(result['groups'].keys()):
+            order_indices = result['groups'][group_label]
+
+            # 找出該組在最終路徑中的訂單
+            group_orders_in_route = []
+            for idx in result['route']:
+                if idx in order_indices:
+                    order = valid_orders[idx]
+                    group_orders_in_route.append(order)
+
+            # 為該組的訂單添加序號和組別標籤
+            group_sequence = 1  # 組內序號（每組重新從1開始）
+            for order in group_orders_in_route:
+                result_orders.append({
+                    'tracking_number': order['tracking_number'],
+                    'lat': order['lat'],  # 前端期望 'lat'
+                    'lon': order['lon'],  # 前端期望 'lon'
+                    'latitude': order['lat'],  # 保留兼容性
+                    'longitude': order['lon'],  # 保留兼容性
+                    'sequence': global_sequence,  # 全局序號：1, 2, 3, 4, 5...
+                    'group_sequence': f"{group_label}-{group_sequence}",  # 組內序號：A-1, A-2, B-1, B-2...
+                    'group_label': group_label,
+                    'group': group_label  # 添加 group 欄位供前端使用
+                })
+                global_sequence += 1  # 全局序號持續增加
+                group_sequence += 1   # 組內序號持續增加（但每組會重置）
+
+        print(f"[INFO] 智能路徑規劃完成！")
+        print(f"[INFO] 總距離: {result['total_distance']:.2f}")
+        print(f"[INFO] 組數: {result['metadata']['n_groups']}")
+
+        return jsonify({
+            'success': True,
+            'orders': result_orders,
+            'total_orders': len(result_orders),
+            'total_groups': result['metadata']['n_groups'],
+            'total_distance': result['total_distance'],
+            'groups': {k: len(v) for k, v in result['groups'].items()},
+            'metadata': result['metadata'],
+            'optimization_method': 'smart'
+        })
+
+    except Exception as e:
+        print(f"[ERROR] 智能路徑規劃錯誤: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': f'智能路徑規劃錯誤: {str(e)}'}), 500
 
 
 if __name__ == '__main__':
